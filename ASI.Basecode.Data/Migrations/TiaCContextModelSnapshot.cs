@@ -660,6 +660,12 @@ namespace ASI.Basecode.Data.Migrations
                         .HasColumnType("varchar(50)")
                         .HasColumnName("middle_name");
 
+                    b.Property<bool>("MustCompleteSetup")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("must_complete_setup");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasMaxLength(255)
