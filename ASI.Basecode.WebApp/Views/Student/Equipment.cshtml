@@ -1,5 +1,5 @@
 ﻿@* Location: ASI.Basecode.WebApp/Views/Student/Equipment.cshtml *@
-@model IEnumerable<ASI.Basecode.Data.Models.EquipmentItem>
+@model IEnumerable<ASI.Basecode.Services.ServiceModels.EquipmentGroup>
 @{
     ViewData["Title"] = "Search Equipment";
 
@@ -7,7 +7,8 @@
     string status = ViewBag.Status as string;
     string sort = ViewBag.Sort as string;
 
-    var items = (Model ?? new List<ASI.Basecode.Data.Models.EquipmentItem>()).ToList();
+    // One entry per model; a model can have several physical units
+    var items = (Model ?? new List<ASI.Basecode.Services.ServiceModels.EquipmentGroup>()).ToList();
 
     int currentPage = ViewBag.Page is int pg1 ? pg1 : 1;
     int totalPages = ViewBag.TotalPages is int pg2 ? pg2 : 1;
@@ -107,19 +108,24 @@
     @if (items.Any())
     {
         <div class="row g-4">
-            @foreach (var item in items)
+            @foreach (var group in items)
             {
-                var available = item.Status == "available";
-                var statusLabel = available ? "Available" : (item.Status == "borrowed" ? "Currently Borrowed" : item.Status);
+                var item = group.Representative;
+                var available = group.IsAvailable;
+                var multi = group.Total > 1;
+                var statusLabel = multi
+                    ? $"{group.AvailableCount} of {group.Total} available"
+                    : (available ? "Available" : group.UnavailableLabel);
+                var photo = group.ImagePath;
                 <div class="col-md-6 col-xl-4">
                     <article class="eq-card h-100">
                         <div class="d-flex gap-3">
-                            @{ var hasPhoto = !string.IsNullOrEmpty(item.ImagePath); }
+                            @{ var hasPhoto = !string.IsNullOrEmpty(photo); }
                             <div class="eq-card__media @(hasPhoto ? "has-photo" : "")" tabindex="@(hasPhoto ? "0" : null)">
                                 <i class="bi @IconFor(item.Category?.CategoryCode)"></i>
                                 @if (hasPhoto)
                                 {
-                                    <img src="@item.ImagePath" alt="@item.BrandModel" loading="lazy" />
+                                    <img src="@photo" alt="@item.BrandModel" loading="lazy" />
                                 }
                             </div>
                             <div class="eq-card__info">
@@ -127,8 +133,15 @@
                                     @(item.Category?.CategoryName ?? "Equipment")
                                     <span class="eq-card__brand">(@item.BrandModel)</span>
                                 </h3>
-                                <div class="eq-card__line"><i class="bi bi-upc-scan"></i> @item.ItemCode</div>
-                                <div class="eq-card__line"><i class="bi bi-patch-check"></i> <span class="text-capitalize">@item.ConditionRating?.Replace("_", " ")</span></div>
+                                @if (multi)
+                                {
+                                    <div class="eq-card__line"><i class="bi bi-boxes"></i> @group.Total units</div>
+                                }
+                                else
+                                {
+                                    <div class="eq-card__line"><i class="bi bi-upc-scan"></i> @item.ItemCode</div>
+                                    <div class="eq-card__line"><i class="bi bi-patch-check"></i> <span class="text-capitalize">@item.ConditionRating?.Replace("_", " ")</span></div>
+                                }
                                 <div class="eq-card__line"><i class="bi bi-geo-alt"></i> @item.StorageLocation</div>
                             </div>
                         </div>

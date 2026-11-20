@@ -212,7 +212,16 @@
                         <td class="fw-semibold">@r.ItemCode</td>
                         <td>
                             <div class="d-flex align-items-center gap-2">
-                                <i class="bi @IconFor(r.CategoryCode) fs-4 text-secondary"></i>
+                                @* The item's photo when it has one, otherwise the category icon *@
+                                @if (!string.IsNullOrEmpty(r.ImagePath))
+                                {
+                                    <img src="@r.ImagePath" alt="@r.ItemName" loading="lazy"
+                                         style="width:2.6rem;height:2.6rem;object-fit:cover;border-radius:8px;flex:0 0 auto;" />
+                                }
+                                else
+                                {
+                                    <i class="bi @IconFor(r.CategoryCode) fs-4 text-secondary"></i>
+                                }
                                 <div>
                                     <div class="fw-semibold">@r.ItemName</div>
                                     @if (!string.IsNullOrWhiteSpace(r.SerialNumber))

@@ -36,6 +36,76 @@
 @section Styles {
     <link rel="stylesheet" href="~/css/dashboard.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/reservation-status.css" asp-append-version="true" />
+    <style>
+        /* Reservation cards: same beige fill and red outline as the custodian's cards */
+        .mr-card {
+            display: flex;
+            flex-direction: column;
+            gap: .9rem;
+            padding: 1rem 1.1rem;
+            background-color: #f6e6da;
+            border: 1.5px solid var(--d-red);
+            border-radius: 12px;
+            box-shadow: 0 3px 8px rgba(90, 0, 0, .1);
+        }
+
+        .mr-thumb {
+            width: 84px;
+            height: 84px;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #f1d3c0;
+            border: 1px solid rgba(90, 0, 0, .2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--d-maroon);
+            font-size: 1.8rem;
+        }
+
+            .mr-thumb img { width: 100%; height: 100%; object-fit: cover; }
+            .mr-thumb.mr-thumb-lg { width: 96px; height: 96px; }
+
+        .mr-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--d-maroon);
+            margin: 0;
+            /* long names stay on two lines */
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .mr-sub { font-size: .8rem; color: #8a5a4a; }
+
+        .mr-dates {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: .75rem;
+            padding: .7rem .8rem;
+            background: rgba(255, 255, 255, .45);
+            border-radius: 8px;
+        }
+
+        .mr-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .5px; color: var(--d-red); font-weight: 700; }
+        .mr-value { font-weight: 600; color: var(--d-maroon); }
+        .mr-time { font-size: .8rem; color: #8a5a4a; }
+
+        .mr-alert {
+            font-size: .82rem;
+            font-weight: 600;
+            color: #a01818;
+            background: rgba(220, 53, 69, .1);
+            border-radius: 6px;
+            padding: .35rem .6rem;
+        }
+
+        .mr-actions { display: flex; gap: .5rem; margin-top: auto; }
+        .mr-detail-list dt { color: var(--d-red); font-weight: 600; }
+        .mr-detail-list dd { color: var(--d-maroon); }
+    </style>
 }
 
 <div class="dash">
@@ -70,80 +140,248 @@
         </div>
     }
 
-    <div class="dash-card">
-        <div class="table-responsive">
-            <table class="table dash-table mb-0">
-                <thead>
-                    <tr>
-                        <th>Equipment</th>
-                        <th>Category</th>
-                        <th>Pickup</th>
-                        <th>Return By</th>
-                        <th>Overdue Penalty</th>
-                        <th>Status</th>
-                        <th>Notes</th>
-                        <th class="text-end">Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var r in Model)
-                    {
-                        var bt = r.BorrowingTransaction;
-                        var liveDays = LiveLateDays(r);
-                        <tr>
-                            <td>
-                                <div class="d-flex align-items-center">
-                                    <span class="dash-icon-circle dash-icon-sm d-inline-flex align-items-center justify-content-center">
-                                        <i class="bi @IconFor(r.EquipmentItem?.Category?.CategoryCode)"></i>
-                                    </span>
-                                    <span class="ms-2">@r.EquipmentItem?.BrandModel</span>
+    @if (!Model.Any())
+    {
+        <div class="dash-card text-center dash-muted py-5">
+            <i class="bi bi-calendar2-x fs-1 d-block mb-2"></i>
+            You have no reservations yet.
+            <div class="mt-3">
+                <a asp-controller="Student" asp-action="Equipment" class="btn dash-btn-reserve">Browse equipment</a>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="row g-4" data-paged>
+            @foreach (var r in Model)
+            {
+                var bt = r.BorrowingTransaction;
+                var item = r.EquipmentItem;
+                var liveDays = LiveLateDays(r);
+                var penalties = bt?.Penalties ?? new List<Penalty>();
+                var openPenalties = penalties.Where(p => p.Status == PenaltyRules.Unresolved).ToList();
+                var canCancel = bt == null && (r.Status == "pending" || r.Status == "approved");
+                var hasPhoto = !string.IsNullOrEmpty(item?.ImagePath);
+
+                <div class="col-md-6 col-xl-4" data-page-item>
+                    <article class="mr-card h-100">
+                        <div class="d-flex gap-3">
+                            <div class="mr-thumb flex-shrink-0">
+                                @if (hasPhoto)
+                                {
+                                    <img src="@item.ImagePath" alt="@item.BrandModel" loading="lazy" />
+                                }
+                                else
+                                {
+                                    <i class="bi @IconFor(item?.Category?.CategoryCode)"></i>
+                                }
+                            </div>
+                            <div class="flex-grow-1" style="min-width:0">
+                                <h3 class="mr-title" title="@item?.BrandModel">@item?.BrandModel</h3>
+                                <div class="mr-sub">@item?.ItemCode · @(item?.Category?.CategoryName ?? "General")</div>
+                                <div class="mt-2">
+                                    <partial name="_ReservationStatus" model="r"
+                                             view-data='@(new Microsoft.AspNetCore.Mvc.ViewFeatures.ViewDataDictionary(ViewData) { { "ShowCaption", true } })' />
                                 </div>
-                            </td>
-                            <td>@(r.EquipmentItem?.Category?.CategoryName ?? "General")</td>
-                            <td>@r.RequestedPickupDate.ToString("MMM d, yyyy")</td>
-                            <td>@r.EstimatedReturnDate.ToString("MMM d, yyyy")</td>
-                            <td>
-                                @foreach (var p in (bt?.Penalties ?? new List<Penalty>()))
+                            </div>
+                        </div>
+
+                        <div class="mr-dates">
+                            <div>
+                                <div class="mr-label">Pickup</div>
+                                <div class="mr-value">@r.RequestedPickupDate.ToString("MMM d, yyyy")</div>
+                                <div class="mr-time">@r.RequestedPickupDate.ToString("h:mm tt")</div>
+                            </div>
+                            <div>
+                                <div class="mr-label">Return by</div>
+                                <div class="mr-value">@r.EstimatedReturnDate.ToString("MMM d, yyyy")</div>
+                                <div class="mr-time">@r.EstimatedReturnDate.ToString("h:mm tt")</div>
+                            </div>
+                        </div>
+
+                        @* Only what needs attention: an unpaid penalty or a charge that is still growing *@
+                        @if (liveDays > 0)
+                        {
+                            <div class="mr-alert"><i class="bi bi-exclamation-triangle-fill me-1"></i>₱@((liveDays * PenaltyRules.LateFeePerDay).ToString("N2")) so far · @liveDays day@(liveDays == 1 ? "" : "s") overdue</div>
+                        }
+                        @foreach (var p in openPenalties)
+                        {
+                            <div class="mr-alert"><i class="bi bi-exclamation-triangle-fill me-1"></i>@PenaltyText(p) · @PenaltyState(p)</div>
+                        }
+
+                        <div class="mr-actions">
+                            <button type="button" class="btn dash-btn-view flex-grow-1"
+                                    data-bs-toggle="modal" data-bs-target="#reservationDetails" data-details="details-@r.Id">
+                                <i class="bi bi-card-text me-1"></i> View Details
+                            </button>
+                            @if (canCancel)
+                            {
+                                <form asp-controller="Student" asp-action="CancelReservation" method="post" class="flex-grow-1"
+                                      onsubmit="return confirm('Cancel this reservation?');">
+                                    <input type="hidden" name="id" value="@r.Id" />
+                                    <button type="submit" class="btn btn-outline-danger w-100">
+                                        <i class="bi bi-x-circle me-1"></i> Cancel
+                                    </button>
+                                </form>
+                            }
+                        </div>
+
+                        @* Full details, copied into the popup by View Details *@
+                        <template id="details-@r.Id">
+                            <div class="d-flex gap-3 align-items-center mb-3">
+                                <div class="mr-thumb mr-thumb-lg flex-shrink-0">
+                                    @if (hasPhoto)
+                                    {
+                                        <img src="@item.ImagePath" alt="@item.BrandModel" />
+                                    }
+                                    else
+                                    {
+                                        <i class="bi @IconFor(item?.Category?.CategoryCode)"></i>
+                                    }
+                                </div>
+                                <div>
+                                    <h5 class="dash fw-bold mb-1">@item?.BrandModel</h5>
+                                    <partial name="_ReservationStatus" model="r"
+                                             view-data='@(new Microsoft.AspNetCore.Mvc.ViewFeatures.ViewDataDictionary(ViewData) { { "ShowCaption", true } })' />
+                                </div>
+                            </div>
+                            <dl class="row small mb-0 mr-detail-list">
+                                <dt class="col-5">Unit</dt>
+                                <dd class="col-7">@item?.ItemCode</dd>
+                                <dt class="col-5">Category</dt>
+                                <dd class="col-7">@(item?.Category?.CategoryName ?? "General")</dd>
+                                <dt class="col-5">Location</dt>
+                                <dd class="col-7">@(string.IsNullOrWhiteSpace(item?.StorageLocation) ? "—" : item.StorageLocation)</dd>
+                                <dt class="col-5">Requested on</dt>
+                                <dd class="col-7">@r.CreatedTime.ToString("MMM d, yyyy h:mm tt")</dd>
+                                <dt class="col-5">Pickup</dt>
+                                <dd class="col-7">@r.RequestedPickupDate.ToString("MMM d, yyyy h:mm tt")</dd>
+                                <dt class="col-5">Return by</dt>
+                                <dd class="col-7">@r.EstimatedReturnDate.ToString("MMM d, yyyy h:mm tt")</dd>
+                                @if (bt != null)
                                 {
-                                    var open = p.Status == PenaltyRules.Unresolved;
-                                    <div class="@(open ? "fw-semibold text-danger" : "text-muted")">@PenaltyText(p)</div>
-                                    <div class="small text-muted">@PenaltyState(p)</div>
+                                    <dt class="col-5">Handed over</dt>
+                                    <dd class="col-7">@bt.ActualPickupTime.ToString("MMM d, yyyy h:mm tt")</dd>
+                                    <dt class="col-5">Returned</dt>
+                                    <dd class="col-7">@(bt.ActualReturnTime.HasValue ? bt.ActualReturnTime.Value.ToString("MMM d, yyyy h:mm tt") : "Not yet")</dd>
+                                    @if (!string.IsNullOrEmpty(bt.ReturnCondition))
+                                    {
+                                        <dt class="col-5">Return condition</dt>
+                                        <dd class="col-7 text-capitalize">@bt.ReturnCondition.Replace("_", " ")</dd>
+                                    }
                                 }
-                                @if (liveDays > 0)
-                                {
-                                    <div class="fw-semibold text-danger">₱@((liveDays * PenaltyRules.LateFeePerDay).ToString("N2")) so far</div>
-                                    <div class="small text-muted">@liveDays day@(liveDays == 1 ? "" : "s") overdue. Return it to stop the charge.</div>
-                                }
-                                @if (!(bt?.Penalties?.Any() ?? false) && liveDays == 0)
-                                {
-                                    <span class="text-muted">None</span>
-                                }
-                            </td>
-                            <td>
-                                <partial name="_ReservationStatus" model="r"
-                                         view-data='@(new Microsoft.AspNetCore.Mvc.ViewFeatures.ViewDataDictionary(ViewData) { { "ShowCaption", true } })' />
-                            </td>
-                            <td class="small text-muted">@r.ReviewNotes</td>
-                            <td class="text-end">
-                                @if (bt == null && (r.Status == "pending" || r.Status == "approved"))
-                                {
-                                    <form asp-controller="Student" asp-action="CancelReservation" method="post"
-                                          onsubmit="return confirm('Cancel this reservation?');">
-                                        <input type="hidden" name="id" value="@r.Id" />
-                                        <button type="submit" class="btn dash-btn dash-btn-view">Cancel</button>
-                                    </form>
-                                }
-                            </td>
-                        </tr>
-                    }
-                    @if (!Model.Any())
-                    {
-                        <tr>
-                            <td colspan="8" class="text-center dash-muted py-4">You have no reservations yet.</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
+                                <dt class="col-5">Custodian notes</dt>
+                                <dd class="col-7">@(string.IsNullOrWhiteSpace(r.ReviewNotes) ? "—" : r.ReviewNotes)</dd>
+                                <dt class="col-5">Penalties</dt>
+                                <dd class="col-7 mb-0">
+                                    @foreach (var p in penalties)
+                                    {
+                                        var open = p.Status == PenaltyRules.Unresolved;
+                                        <div class="@(open ? "fw-semibold text-danger" : "text-muted")">@PenaltyText(p) · @PenaltyState(p)</div>
+                                    }
+                                    @if (liveDays > 0)
+                                    {
+                                        <div class="fw-semibold text-danger">₱@((liveDays * PenaltyRules.LateFeePerDay).ToString("N2")) so far, @liveDays day@(liveDays == 1 ? "" : "s") overdue. Return it to stop the charge.</div>
+                                    }
+                                    @if (!penalties.Any() && liveDays == 0)
+                                    {
+                                        <span>None</span>
+                                    }
+                                </dd>
+                            </dl>
+                        </template>
+                    </article>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<div class="modal fade" id="reservationDetails" tabindex="-1" aria-labelledby="reservationDetailsLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background-color: var(--d-bg);">
+            <div class="modal-header border-bottom border-secondary">
+                <h5 class="modal-title dash fw-bold" id="reservationDetailsLabel">Reservation Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="reservationDetailsBody"></div>
+            <div class="modal-footer border-top border-secondary">
+                <button type="button" class="btn dash-btn-view" data-bs-dismiss="modal">Close</button>
+            </div>
         </div>
     </div>
 </div>
+
+@section Scripts {
+    <script>
+        // View Details: copy the card's hidden details into the popup
+        document.getElementById('reservationDetails').addEventListener('show.bs.modal', function (event) {
+            var button = event.relatedTarget;
+            var template = button && document.getElementById(button.getAttribute('data-details'));
+            var body = document.getElementById('reservationDetailsBody');
+            body.textContent = '';
+            if (template) body.appendChild(template.content.cloneNode(true));
+        });
+
+        // Pages the cards two rows at a time, so a page fits on screen instead of scrolling:
+        // 6 cards on wide screens (3 per row), 4 on medium (2 per row), 2 on phones (1 per row)
+        document.querySelectorAll('[data-paged]').forEach(function (list) {
+            var items = Array.prototype.filter.call(list.children, function (el) { return el.hasAttribute('data-page-item'); });
+
+            var nav = document.createElement('nav');
+            nav.setAttribute('aria-label', 'Reservation pages');
+            var ul = document.createElement('ul');
+            ul.className = 'pagination dash-pagination justify-content-center mt-4 mb-0';
+            nav.appendChild(ul);
+            list.parentNode.insertBefore(nav, list.nextSibling);
+
+            var size = 0, current = 0;
+
+            // Card columns match the grid: col-xl-4 (3 per row), col-md-6 (2 per row), else 1
+            function pageSize() {
+                var perRow = window.matchMedia('(min-width: 1200px)').matches ? 3
+                           : window.matchMedia('(min-width: 768px)').matches ? 2 : 1;
+                return perRow * 2;
+            }
+
+            function button(label, target, disabled, active) {
+                var li = document.createElement('li');
+                li.className = 'page-item' + (disabled ? ' disabled' : '') + (active ? ' active' : '');
+                var a = document.createElement('a');
+                a.className = 'page-link';
+                a.href = '#';
+                a.textContent = label;
+                a.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    if (!disabled && !active) show(target);
+                });
+                li.appendChild(a);
+                return li;
+            }
+
+            function show(page) {
+                var pages = Math.max(1, Math.ceil(items.length / size));
+                current = Math.min(Math.max(0, page), pages - 1);
+                items.forEach(function (el, i) { el.classList.toggle('d-none', Math.floor(i / size) !== current); });
+
+                ul.textContent = '';
+                nav.classList.toggle('d-none', pages <= 1);
+                if (pages <= 1) return;
+                ul.appendChild(button('‹', current - 1, current === 0, false));
+                for (var p = 0; p < pages; p++) ul.appendChild(button(String(p + 1), p, false, p === current));
+                ul.appendChild(button('›', current + 1, current === pages - 1, false));
+            }
+
+            function layout() {
+                var newSize = pageSize();
+                if (newSize === size) return;
+                var firstShown = current * size;          // keep the same cards in view after a resize
+                size = newSize;
+                show(Math.floor(firstShown / size));
+            }
+
+            window.addEventListener('resize', layout);
+            layout();
+        });
+    </script>
+}

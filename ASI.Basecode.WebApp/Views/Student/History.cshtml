@@ -77,25 +77,25 @@
     @* ===== Summary cards ===== *@
     <div class="row g-3 mb-4">
         <div class="col-6 col-xl-3">
-            <div class="dash-card h-100">
+            <div class="dash-card h-100 justify-content-between">
                 <div class="dash-stat-label">Total Borrowings</div>
                 <div class="dash-stat-count">@Model.TotalTransactions</div>
             </div>
         </div>
         <div class="col-6 col-xl-3">
-            <div class="dash-card h-100">
+            <div class="dash-card h-100 justify-content-between">
                 <div class="dash-stat-label">Currently Borrowing</div>
                 <div class="dash-stat-count">@Model.ActiveLoans</div>
             </div>
         </div>
         <div class="col-6 col-xl-3">
-            <div class="dash-card h-100">
+            <div class="dash-card h-100 justify-content-between">
                 <div class="dash-stat-label">Late Returns</div>
                 <div class="dash-stat-count">@Model.LateReturns</div>
             </div>
         </div>
         <div class="col-6 col-xl-3">
-            <div class="dash-card h-100">
+            <div class="dash-card h-100 justify-content-between">
                 <div class="dash-stat-label">On-time Return Rate</div>
                 <div class="dash-stat-count">@Model.OnTimeRate%</div>
             </div>
@@ -188,9 +188,18 @@
                         <tr>
                             <td>
                                 <div class="d-flex align-items-center">
-                                    <span class="dash-icon-circle dash-icon-sm d-inline-flex align-items-center justify-content-center">
-                                        <i class="bi @IconFor(categoryCode)"></i>
-                                    </span>
+                                    @* The item's photo when it has one, otherwise the category icon *@
+                                    @if (!string.IsNullOrEmpty(t.EquipmentItem?.ImagePath))
+                                    {
+                                        <img src="@t.EquipmentItem.ImagePath" alt="@t.EquipmentItem.BrandModel" loading="lazy"
+                                             style="width:2.6rem;height:2.6rem;object-fit:cover;border-radius:8px;flex:0 0 auto;" />
+                                    }
+                                    else
+                                    {
+                                        <span class="dash-icon-circle dash-icon-sm d-inline-flex align-items-center justify-content-center">
+                                            <i class="bi @IconFor(categoryCode)"></i>
+                                        </span>
+                                    }
                                     <div class="ms-2">
                                         <div>@(t.EquipmentItem?.BrandModel ?? "Unknown Equipment")</div>
                                         <div class="dash-res-date">@(t.EquipmentItem?.ItemCode ?? "-")</div>

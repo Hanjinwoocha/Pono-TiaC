@@ -72,6 +72,34 @@
         </tbody>
     </table>
 
+    @* Same rows and status rule as the Overdue & Damage Penalty Summary tab *@
+    <h5 class="mt-4 mb-2">Overdue &amp; Damage Penalty Summary</h5>
+    <table class="table table-bordered table-sm">
+        <thead class="table-light">
+            <tr>
+                <th>Txn ID</th><th>Borrower</th><th>Item</th><th>Issue</th><th>Notes</th><th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            @{ var printedAt = DateTime.Now; }
+            @foreach (var t in Model.PenaltyRows)
+            {
+                <tr>
+                    <td>@HistoryPageViewModel.TxnCode(t)</td>
+                    <td>@t.Borrower.FirstName @t.Borrower.LastName (@t.Borrower.UserId)</td>
+                    <td>@t.EquipmentItem.BrandModel (@t.EquipmentItem.ItemCode)</td>
+                    <td>@string.Join(", ", HistoryPageViewModel.PenaltyIssues(t, printedAt))</td>
+                    <td>@(string.IsNullOrWhiteSpace(t.DamageNotes) ? "-" : t.DamageNotes)</td>
+                    <td>@HistoryPageViewModel.PenaltyStatus(t, printedAt)</td>
+                </tr>
+            }
+            @if (!Model.PenaltyRows.Any())
+            {
+                <tr><td colspan="6" class="text-center text-muted">No late returns or damaged assets.</td></tr>
+            }
+        </tbody>
+    </table>
+
     <script>window.onload = function () { window.print(); };</script>
 </body>
 </html>

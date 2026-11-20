@@ -105,7 +105,8 @@ namespace ASI.Basecode.WebApp.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public IActionResult AddEquipment(EquipmentItem model, IFormFile photo)
+        // serialNumbers: when adding several units, one serial per line (line 1 = unit -01, ...)
+        public IActionResult AddEquipment(EquipmentItem model, IFormFile photo, int quantity = 1, string serialNumbers = null)
         {
             model.CreatedBy = CurrentUserCode ?? "Custodian";
             model.UpdatedBy = model.CreatedBy;
@@ -124,7 +125,13 @@ namespace ASI.Basecode.WebApp.Controllers
             var imagePath = SavePhoto(photo);
             model.ImagePath = imagePath;
 
-            var result = _equipmentService.AddEquipment(model, CurrentUserCode);
+            var serials = (serialNumbers ?? "")
+                .Replace("\r\n", "\n")
+                .Split('\n')
+                .ToList();
+
+            // Several units share the one uploaded photo file
+            var result = _equipmentService.AddEquipment(model, CurrentUserCode, quantity, serials);
             if (!result.Success)
             {
                 DeletePhotoFile(imagePath);
@@ -162,7 +169,9 @@ namespace ASI.Basecode.WebApp.Controllers
 
             if (result.Success)
             {
-                if (newImagePath != null) DeletePhotoFile(oldImagePath);
+                // Units added together share a photo file: only delete it when no other unit uses it
+                if (newImagePath != null && !_equipmentService.ImageInUse(oldImagePath, model.Id))
+                    DeletePhotoFile(oldImagePath);
                 TempData["SuccessMessage"] = result.Message;
             }
             else
@@ -279,8 +288,8 @@ namespace ASI.Basecode.WebApp.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public IActionResult ReleaseItem(int id)
-            => HandleResult(_reservationService.Release(id, CurrentUserCode));
+        public IActionResult ReleaseItem(int id, int? unitId)
+            => HandleResult(_reservationService.Release(id, CurrentUserCode, unitId));
 
         [HttpPost]
         [ValidateAntiForgeryToken]

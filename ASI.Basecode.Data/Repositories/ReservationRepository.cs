@@ -77,6 +77,13 @@ namespace ASI.Basecode.Data.Repositories
                            .FirstOrDefault(e => e.Id == id);
         }
 
+        public IQueryable<EquipmentItem> GetEquipmentItems()
+        {
+            return _context.EquipmentItems
+                           .Include(e => e.Category)
+                           .Where(e => e.Status != "archived");
+        }
+
         // Added to the context only; the service calls SaveChanges()
         public void AddReservation(Reservation reservation)
         {

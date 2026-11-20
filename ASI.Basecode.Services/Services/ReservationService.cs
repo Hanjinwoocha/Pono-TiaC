@@ -44,6 +44,40 @@ namespace ASI.Basecode.Services.Services
             _settingsService = settingsService;
         }
 
+        // ---------- Units of the same model ----------
+
+        // The units of this item's model that could be handed over for [start, end): available right now
+        // and not held by an approved reservation (not yet returned) that overlaps that time.
+        // The given item comes first when it is free, then the others by item code.
+        private List<EquipmentItem> FreeUnits(EquipmentItem item, DateTime start, DateTime end, int exceptReservationId = 0)
+        {
+            var units = _reservationRepository.GetEquipmentItems()
+                .Where(EquipmentGrouping.SameModelAs(item))
+                .Where(u => u.Status == "available")
+                .ToList();
+            if (units.Count == 0) return units;
+
+            var unitIds = units.Select(u => u.Id).ToList();
+            var busy = _reservationRepository.GetReservations()
+                .Where(x => x.Id != exceptReservationId &&
+                            unitIds.Contains(x.EquipmentItemId) &&
+                            x.Status == "approved" &&
+                            (x.BorrowingTransaction == null || x.BorrowingTransaction.ActualReturnTime == null) &&
+                            x.RequestedPickupDate < end &&
+                            x.EstimatedReturnDate > start)
+                .Select(x => x.EquipmentItemId)
+                .Distinct()
+                .ToList();
+
+            return units.Where(u => !busy.Contains(u.Id))
+                        .OrderBy(u => u.Id == item.Id ? 0 : 1)
+                        .ThenBy(u => u.ItemCode)
+                        .ToList();
+        }
+
+        private int UnitCount(EquipmentItem item) =>
+            _reservationRepository.GetEquipmentItems().Count(EquipmentGrouping.SameModelAs(item));
+
         public ReservationsPageViewModel GetPage(string search, int? categoryId, string custodianCode = null)
         {
             ExpireMissedPickups();
@@ -86,13 +120,25 @@ namespace ASI.Basecode.Services.Services
 
             var settings = _settingsService.Get();
 
+            var approved = reservations.Where(r => r.Status == "approved" && r.BorrowingTransaction == null)
+                                       .OrderBy(r => r.RequestedPickupDate).ToList();
+
+            // Which unit to hand over is the custodian's choice when the model has several free ones
+            var releaseUnits = new Dictionary<int, List<EquipmentItem>>();
+            var now = DateTime.Now;
+            foreach (var r in approved)
+            {
+                var start = now < r.RequestedPickupDate ? now : r.RequestedPickupDate;
+                var free = FreeUnits(r.EquipmentItem, start, r.EstimatedReturnDate, r.Id);
+                if (free.Count > 1) releaseUnits[r.Id] = free;
+            }
 
             return new ReservationsPageViewModel
             {
                 Pending = reservations.Where(r => r.Status == "pending")
                                       .OrderBy(r => r.RequestedPickupDate).ToList(),
-                Approved = reservations.Where(r => r.Status == "approved" && r.BorrowingTransaction == null)
-                                       .OrderBy(r => r.RequestedPickupDate).ToList(),
+                Approved = approved,
+                ReleaseUnits = releaseUnits,
                 Active = transactions.OrderBy(t => t.ActualPickupTime).ToList(),
                 Categories = _reservationRepository.GetCategories().OrderBy(c => c.CategoryName).ToList(),
                 Search = search,
@@ -135,10 +181,26 @@ namespace ASI.Basecode.Services.Services
                 r.Borrower.UserId == userCode &&
                 r.Status == "pending");
         }
-        public ServiceResult CreateReservation(string borrowerCode, int equipmentItemId, DateTime pickup, DateTime returnDate)
+        // Pending requests, approved reservations and items not yet returned all count toward the limit
+        private int HoldingCount(int borrowerDbId) =>
+            _reservationRepository.GetReservations().Count(x =>
+                x.BorrowerId == borrowerDbId &&
+                (x.Status == "pending" ||
+                 (x.Status == "approved" &&
+                  (x.BorrowingTransaction == null || x.BorrowingTransaction.ActualReturnTime == null))));
+
+        public int CountHoldingForUser(string userCode)
+        {
+            var borrowerDbId = _reservationRepository.GetUserDbId(userCode);
+            return borrowerDbId == 0 ? 0 : HoldingCount(borrowerDbId);
+        }
+
+        public ServiceResult CreateReservation(string borrowerCode, int equipmentItemId, DateTime pickup, DateTime returnDate, int quantity = 1)
         {
             var borrowerDbId = _reservationRepository.GetUserDbId(borrowerCode);
             if (borrowerDbId == 0) return ServiceResult.Fail("Your session expired. Please log in again.");
+            if (quantity < 1)
+                return ServiceResult.Fail("Please request at least 1 unit.");
 
             ExpireMissedPickups();
 
@@ -146,11 +208,10 @@ namespace ASI.Basecode.Services.Services
             if (_reservationRepository.GetUserByDbId(borrowerDbId)?.BorrowerStatus == PenaltyRules.Restricted)
                 return ServiceResult.Fail("Your borrowing is restricted because of an unresolved penalty (overdue or damaged equipment). Settle it with the custodian, then ask an administrator to reactivate your account.");
 
+            // The student requests a model; the item they opened is just one of its units
             var item = _reservationRepository.GetEquipmentItemById(equipmentItemId);
             if (item == null || item.Status == "archived")
                 return ServiceResult.Fail("This equipment item was not found.");
-            if (item.Status != "available")
-                return ServiceResult.Fail("This item is not available for reservation right now.");
             if (item.CustodianId.HasValue && !_reservationRepository.IsAccountActive(item.CustodianId.Value))
                 return ServiceResult.Fail("This item is not available for reservation right now.");
 
@@ -163,49 +224,79 @@ namespace ASI.Basecode.Services.Services
             if (scheduleError != null)
                 return ServiceResult.Fail(scheduleError);
 
-            // Item limit: pending requests, approved reservations and items not yet returned all count
-            var holding = _reservationRepository.GetReservations().Count(x =>
-                x.BorrowerId == borrowerDbId &&
-                (x.Status == "pending" ||
-                 (x.Status == "approved" &&
-                  (x.BorrowingTransaction == null || x.BorrowingTransaction.ActualReturnTime == null))));
+            // Item limit (set by the custodian): every requested unit counts, together with what the
+            // student already has pending, approved or out
+            var holding = HoldingCount(borrowerDbId);
             if (holding >= rules.MaxActiveItems)
                 return ServiceResult.Fail(
                     $"You already have {holding} request(s) or item(s) in progress. The limit is {rules.MaxActiveItems}. " +
                     "Wait for a decision, cancel a request, or return an item first.");
+            if (holding + quantity > rules.MaxActiveItems)
+                return ServiceResult.Fail(
+                    $"You can request at most {rules.MaxActiveItems - holding} more item(s) right now " +
+                    $"(the limit is {rules.MaxActiveItems} and you have {holding} in progress).");
 
-            // One open request per student per item
-            var alreadyRequested = _reservationRepository.GetReservations().Any(x =>
-                x.BorrowerId == borrowerDbId &&
-                x.EquipmentItemId == equipmentItemId &&
-                x.Status == "pending");
-            if (alreadyRequested)
-                return ServiceResult.Fail("You already have a pending request for this item.");
-
-            // Not allowed to overlap a reservation the custodian already approved (and that isn't returned yet)
-            var overlapsApproved = _reservationRepository.GetReservations().Any(x =>
-                x.EquipmentItemId == equipmentItemId &&
-                x.Status == "approved" &&
-                (x.BorrowingTransaction == null || x.BorrowingTransaction.ActualReturnTime == null) &&
-                x.RequestedPickupDate < returnDate &&
-                x.EstimatedReturnDate > pickup);
-            if (overlapsApproved)
-                return ServiceResult.Fail("This item is already reserved for part of that time. Please choose different dates.");
-
-            var now = DateTime.Now;
-            _reservationRepository.AddReservation(new Reservation
+            // A unit of this model that no approved reservation holds during that time
+            var free = FreeUnits(item, pickup, returnDate);
+            if (free.Count == 0)
             {
-                BorrowerId = borrowerDbId,
-                EquipmentItemId = equipmentItemId,
-                RequestedPickupDate = pickup,
-                EstimatedReturnDate = returnDate,
-                Status = "pending",
-                CreatedTime = now,
-                UpdatedTime = now
-            });
+                var anyAvailable = _reservationRepository.GetEquipmentItems()
+                    .Where(EquipmentGrouping.SameModelAs(item))
+                    .Any(u => u.Status == "available");
+                return ServiceResult.Fail(anyAvailable
+                    ? "This item is already reserved for that time. Please choose different dates."
+                    : "This item is not available for reservation right now.");
+            }
+
+            // One open request per student per unit: a second request for the same model goes to another unit
+            var myPendingUnitIds = _reservationRepository.GetReservations()
+                .Where(x => x.BorrowerId == borrowerDbId && x.Status == "pending")
+                .Select(x => x.EquipmentItemId)
+                .ToList();
+            var choices = free.Where(u => !myPendingUnitIds.Contains(u.Id)).ToList();
+            if (choices.Count == 0)
+                return ServiceResult.Fail("You already have a pending request for this item.");
+            if (choices.Count < quantity)
+                return ServiceResult.Fail(
+                    $"Only {choices.Count} unit(s) of this item are free for that time. Request fewer, or choose different dates.");
+
+            // Spread requests over the units: pick the one with the fewest other requests for that time
+            var choiceIds = choices.Select(u => u.Id).ToList();
+            var requestsPerUnit = _reservationRepository.GetReservations()
+                .Where(x => x.Status == "pending" &&
+                            choiceIds.Contains(x.EquipmentItemId) &&
+                            x.RequestedPickupDate < returnDate &&
+                            x.EstimatedReturnDate > pickup)
+                .GroupBy(x => x.EquipmentItemId)
+                .Select(g => new { UnitId = g.Key, Count = g.Count() })
+                .ToList();
+            // Least-requested units first; ties keep the order of FreeUnits (the opened unit, then by item code)
+            var units = choices
+                .OrderBy(u => requestsPerUnit.FirstOrDefault(p => p.UnitId == u.Id)?.Count ?? 0)
+                .Take(quantity)
+                .ToList();
+
+            // One reservation per unit, so each is approved, released and returned on its own.
+            // They are saved together: either every unit is requested, or none.
+            var now = DateTime.Now;
+            foreach (var unit in units)
+            {
+                _reservationRepository.AddReservation(new Reservation
+                {
+                    BorrowerId = borrowerDbId,
+                    EquipmentItemId = unit.Id,
+                    RequestedPickupDate = pickup,
+                    EstimatedReturnDate = returnDate,
+                    Status = "pending",
+                    CreatedTime = now,
+                    UpdatedTime = now
+                });
+            }
             _reservationRepository.SaveChanges();
 
-            return ServiceResult.Ok("Request sent! The custodian will review it and you will see the result here.");
+            return ServiceResult.Ok(quantity == 1
+                ? "Request sent! The custodian will review it and you will see the result here."
+                : $"Request for {quantity} units sent! Each unit is listed separately in My Reservations, and the custodian reviews them one by one.");
         }
 
         public ServiceResult CancelReservation(int reservationId, string borrowerCode)
@@ -253,20 +344,26 @@ namespace ASI.Basecode.Services.Services
             if (reservation.EquipmentItem.CustodianId != custodianDbId)
                 return ServiceResult.Fail("This request belongs to another custodian.");
             if (reservation.Status != "pending") return ServiceResult.Fail("This request was already processed.");
+            // An approval whose return time has passed would be expired again right away
+            if (reservation.EstimatedReturnDate <= DateTime.Now)
+                return ServiceResult.Fail("This request's return time has already passed, so it can't be approved. Decline it, and the student can send a new request.");
             if (reservation.Borrower?.BorrowerStatus == PenaltyRules.Restricted)
                 return ServiceResult.Fail("This borrower is restricted because of an unresolved penalty.");
-            if (reservation.EquipmentItem.Status != "available")
-                return ServiceResult.Fail("This item is not available right now.");
 
-            // Only an approved reservation that covers part of the same time blocks this one
-            // (the same rule students are held to when they request)
-            var overlapsApproved = _reservationRepository.GetReservations().Any(x =>
-                x.Id != reservation.Id && x.EquipmentItemId == reservation.EquipmentItemId &&
-                x.Status == "approved" && x.BorrowingTransaction == null &&
-                x.RequestedPickupDate < reservation.EstimatedReturnDate &&
-                x.EstimatedReturnDate > reservation.RequestedPickupDate);
-            if (overlapsApproved)
-                return ServiceResult.Fail("Another approved reservation already covers part of this time for the item. Cancel that one first, or decline this request.");
+            // Only an approved reservation that covers part of the same time blocks a unit (the same rule
+            // students are held to when they request). If the requested unit is taken, another unit of
+            // the same model is used instead.
+            var free = FreeUnits(reservation.EquipmentItem, reservation.RequestedPickupDate,
+                                 reservation.EstimatedReturnDate, reservation.Id);
+            if (free.Count == 0)
+            {
+                if (UnitCount(reservation.EquipmentItem) > 1)
+                    return ServiceResult.Fail("Every unit of this item is reserved or unavailable for that time. Decline this request, or cancel another reservation first.");
+                return ServiceResult.Fail(reservation.EquipmentItem.Status != "available"
+                    ? "This item is not available right now."
+                    : "Another approved reservation already covers part of this time for the item. Cancel that one first, or decline this request.");
+            }
+
             var limit = _settingsService.Get().MaxActiveItems;
             var holding = _reservationRepository.GetReservations().Count(x =>
                 x.Id != reservation.Id &&
@@ -275,6 +372,14 @@ namespace ASI.Basecode.Services.Services
                 (x.BorrowingTransaction == null || x.BorrowingTransaction.ActualReturnTime == null));
             if (holding >= limit)
                 return ServiceResult.Fail($"This borrower already has {holding} approved or borrowed item(s). The limit is {limit}. Decline this request, or approve it after an item is returned.");
+
+            var unit = free[0];   // the requested unit when it is free
+            if (unit.Id != reservation.EquipmentItemId)
+            {
+                reservation.EquipmentItemId = unit.Id;
+                reservation.EquipmentItem = unit;
+            }
+
             reservation.Status = "approved";
             reservation.ReviewedBy = custodianDbId;
             reservation.ReviewedAt = DateTime.Now;
@@ -282,7 +387,9 @@ namespace ASI.Basecode.Services.Services
             reservation.UpdatedTime = DateTime.Now;
             _reservationRepository.SaveChanges();
 
-            return ServiceResult.Ok("Request approved. Release the item when the borrower arrives.");
+            return ServiceResult.Ok(UnitCount(unit) > 1
+                ? $"Request approved for unit {unit.ItemCode}. Release it when the borrower arrives."
+                : "Request approved. Release the item when the borrower arrives.");
         }
 
         public ServiceResult Decline(int reservationId, string reason, string custodianCode)
@@ -342,26 +449,31 @@ namespace ASI.Basecode.Services.Services
             return ServiceResult.Ok("Reservation cancelled. The borrower will see your reason.");
         }
 
-        // An approved reservation that was never picked up expires once its return time has passed,
-        // so a no-show can't keep blocking the item. Runs whenever reservations are read or changed.
+        // A reservation that was never picked up expires once its return time has passed:
+        // an approved one (no-show) so it can't keep blocking the item, and a pending one because
+        // it can no longer be approved. Runs whenever reservations are read or changed.
         private void ExpireMissedPickups()
         {
             var now = DateTime.Now;
             var missed = _reservationRepository.GetReservations()
-                .Where(r => r.Status == "approved" && r.BorrowingTransaction == null && r.EstimatedReturnDate < now)
+                .Where(r => (r.Status == "approved" || r.Status == "pending") &&
+                            r.BorrowingTransaction == null && r.EstimatedReturnDate < now)
                 .ToList();
             if (missed.Count == 0) return;
 
             foreach (var r in missed)
             {
+                r.ReviewNotes = r.Status == "pending"
+                    ? "Expired: the request was not reviewed before the return time."
+                    : "Expired: the item was not picked up before the return time.";
                 r.Status = "cancelled";
-                r.ReviewNotes = "Expired: the item was not picked up before the return time.";
                 r.UpdatedTime = now;
             }
             _reservationRepository.SaveChanges();
         }
 
-        public ServiceResult Release(int reservationId, string custodianCode)
+        // unitDbId: the unit the custodian hands over (any free unit of the same model); null = the assigned one
+        public ServiceResult Release(int reservationId, string custodianCode, int? unitDbId = null)
         {
             var custodianDbId = _reservationRepository.GetUserDbId(custodianCode);
             if (custodianDbId == 0) return ServiceResult.Fail("Your session expired. Please log in again.");
@@ -374,13 +486,35 @@ namespace ASI.Basecode.Services.Services
                 return ServiceResult.Fail("This request belongs to another custodian.");
             if (reservation.Status != "approved" || reservation.BorrowingTransaction != null)
                 return ServiceResult.Fail("This reservation can't be released. It may have expired or been cancelled.");
-            if (reservation.EquipmentItem.Status != "available")
-                return ServiceResult.Fail("This item is not available right now.");
+
+            // The unit handed over: the one picked by the custodian, else the assigned one, else another free unit
+            var start = DateTime.Now < reservation.RequestedPickupDate ? DateTime.Now : reservation.RequestedPickupDate;
+            var free = FreeUnits(reservation.EquipmentItem, start, reservation.EstimatedReturnDate, reservation.Id);
+            EquipmentItem unit;
+            if (unitDbId.HasValue)
+            {
+                unit = free.FirstOrDefault(u => u.Id == unitDbId.Value);
+                if (unit == null)
+                    return ServiceResult.Fail("That unit isn't free for this reservation. Please choose another unit.");
+            }
+            else
+            {
+                unit = free.FirstOrDefault();
+                if (unit == null)
+                    return ServiceResult.Fail("This item is not available right now.");
+            }
+
+            if (unit.Id != reservation.EquipmentItemId)
+            {
+                reservation.EquipmentItemId = unit.Id;
+                reservation.EquipmentItem = unit;
+                reservation.UpdatedTime = DateTime.Now;
+            }
 
             _reservationRepository.AddTransaction(new BorrowingTransaction
             {
                 ReservationId = reservation.Id,
-                EquipmentItemId = reservation.EquipmentItemId,
+                EquipmentItemId = unit.Id,
                 BorrowerId = reservation.BorrowerId,
                 ReleasedBy = custodianDbId,
                 ActualPickupTime = DateTime.Now,
@@ -394,7 +528,7 @@ namespace ASI.Basecode.Services.Services
             reservation.EquipmentItem.UpdatedTime = DateTime.Now;
             _reservationRepository.SaveChanges();
 
-            return ServiceResult.Ok("Item released to the borrower.");
+            return ServiceResult.Ok($"{unit.ItemCode} released to the borrower.");
         }
 
         public ServiceResult Return(int transactionId, string condition, string notes, string custodianCode)

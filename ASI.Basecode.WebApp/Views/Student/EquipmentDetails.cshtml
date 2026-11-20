@@ -3,8 +3,20 @@
 @{
     ViewData["Title"] = "Equipment Details";
 
-    var available = Model.Status == "available";
-    var statusLabel = available ? "Available" : (Model.Status == "borrowed" ? "Currently Borrowed" : Model.Status);
+    // The page shows the whole model; Model is one of its units (an available one when there is one)
+    var group = ViewBag.Group as ASI.Basecode.Services.ServiceModels.EquipmentGroup;
+    var multi = group != null && group.Total > 1;
+    var available = group?.IsAvailable ?? Model.Status == "available";
+    var statusLabel = multi
+        ? $"{group.AvailableCount} of {group.Total} units available"
+        : (available ? "Available" : (group?.UnavailableLabel ?? (Model.Status == "borrowed" ? "Currently Borrowed" : Model.Status)));
+    var photo = group?.ImagePath ?? Model.ImagePath;
+
+    // Quantity: at most the free units, and at most what the custodian's item limit still allows
+    int holding = ViewBag.Holding is int hd ? hd : 0;
+    int canRequest = ViewBag.CanRequest is int cr ? cr : int.MaxValue;
+    var maxQuantity = Math.Min(group?.AvailableCount ?? 1, canRequest);
+    var quantityValue = TempData["ReserveQuantity"] is int rq ? Math.Clamp(rq, 1, Math.Max(1, maxQuantity)) : 1;
     var rules = ViewBag.Rules as ASI.Basecode.Services.ServiceModels.BorrowingSettings
                 ?? new ASI.Basecode.Services.ServiceModels.BorrowingSettings();
     var nowTime = DateTime.Now;
@@ -48,6 +60,20 @@
         .rd-photo img { width: 100%; height: 100%; object-fit: cover; }
         .rd-info dt { font-size: .75rem; text-transform: uppercase; letter-spacing: .5px; color: var(--d-red); font-weight: 700; }
         .rd-info dd { margin-bottom: .8rem; }
+
+        /* Quantity − / + stepper */
+        .qty-stepper { max-width: 12rem; }
+        .qty-stepper .qty-btn {
+            background-color: #f1d3c0;
+            border: 1.5px solid var(--d-red);
+            color: var(--d-maroon);
+            width: 2.6rem;
+        }
+        .qty-stepper .qty-btn:hover:not(:disabled) { background-color: #ebc3ab; }
+        .qty-stepper .qty-btn:disabled { opacity: .45; }
+        .qty-stepper input { border-left: 0; border-right: 0; -moz-appearance: textfield; }
+        .qty-stepper input::-webkit-outer-spin-button,
+        .qty-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     </style>
 }
 
@@ -82,9 +108,9 @@
         <div class="col-lg-6">
             <div class="dash-card h-100">
                 <div class="rd-photo mb-3">
-                    @if (!string.IsNullOrEmpty(Model.ImagePath))
+                    @if (!string.IsNullOrEmpty(photo))
                     {
-                        <img src="@Model.ImagePath" alt="@Model.BrandModel" />
+                        <img src="@photo" alt="@Model.BrandModel" />
                     }
                     else
                     {
@@ -96,11 +122,22 @@
                     <dt>Status</dt>
                     <dd><span class="dash-pill @(available ? "is-available" : "is-borrowed")">@statusLabel</span></dd>
 
-                    <dt>Item code</dt>
-                    <dd>@Model.ItemCode</dd>
+                    @if (multi)
+                    {
+                        <dt>Units</dt>
+                        <dd>
+                            @group.Total units: @string.Join(", ", group.Units.Select(u => u.ItemCode))
+                            <div class="dash-muted small mt-1">You request the item; a free unit is assigned to you, and the custodian hands it over at pickup.</div>
+                        </dd>
+                    }
+                    else
+                    {
+                        <dt>Item code</dt>
+                        <dd>@Model.ItemCode</dd>
 
-                    <dt>Condition</dt>
-                    <dd class="text-capitalize">@Model.ConditionRating?.Replace("_", " ")</dd>
+                        <dt>Condition</dt>
+                        <dd class="text-capitalize">@Model.ConditionRating?.Replace("_", " ")</dd>
+                    }
 
                     <dt>Location</dt>
                     <dd class="mb-0">@Model.StorageLocation</dd>
@@ -131,6 +168,44 @@
                             <div class="form-text">Pick the pickup time first. The return time is filled in for you.</div>
                         </div>
 
+                        @if (multi && maxQuantity > 0)
+                        {
+                            <div class="mb-3">
+                                <label class="dash-stat-label mb-1" for="quantity">Quantity</label>
+                                @* − / + buttons: the browser's own arrows are tiny and give no reason when they stop *@
+                                <div class="input-group qty-stepper">
+                                    <button type="button" class="btn qty-btn" id="qtyMinus" aria-label="One less">
+                                        <i class="bi bi-dash-lg"></i>
+                                    </button>
+                                    <input type="number" id="quantity" name="quantity" class="form-control dash-search-input text-center"
+                                           value="@quantityValue" min="1" max="@maxQuantity" step="1" required
+                                           data-limit="@rules.MaxActiveItems" data-holding="@holding" data-free="@group.AvailableCount" />
+                                    <button type="button" class="btn qty-btn" id="qtyPlus" aria-label="One more">
+                                        <i class="bi bi-plus-lg"></i>
+                                    </button>
+                                </div>
+                                <div class="form-text text-danger d-none" id="qtyMaxNote"></div>
+                                <div class="form-text">
+                                    You can request up to <strong>@maxQuantity</strong>
+                                    (@group.AvailableCount unit(s) free; the limit is @rules.MaxActiveItems item(s) and you have @holding in progress).
+                                    Each unit is reviewed separately.
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <input type="hidden" name="quantity" value="1" />
+                        }
+
+                        @if (maxQuantity <= 0)
+                        {
+                            <div class="alert alert-warning small py-2 mb-3">
+                                <i class="bi bi-exclamation-triangle me-1"></i>
+                                You already have @holding request(s) or item(s) in progress, which is the limit of @rules.MaxActiveItems.
+                                Cancel a request or return an item first.
+                            </div>
+                        }
+
                         <div class="dash-muted small mb-3">
                             <i class="bi bi-info-circle me-1"></i> Borrowing rules
                             <ul class="mb-0 ps-3 mt-1">
@@ -145,7 +220,7 @@
                             </div>
                         </div>
 
-                        <button type="submit" class="btn dash-btn-reserve w-100">
+                        <button type="submit" class="btn dash-btn-reserve w-100" disabled="@(maxQuantity <= 0)">
                             <i class="bi bi-send me-1"></i> Send reservation request
                         </button>
                     </form>
@@ -168,6 +243,40 @@
 
 @section Scripts {
     <script>
+        // Quantity stepper: stays between 1 and the max, and says why + stops
+        (function () {
+            var input = document.getElementById('quantity');
+            var minus = document.getElementById('qtyMinus');
+            var plus = document.getElementById('qtyPlus');
+            var note = document.getElementById('qtyMaxNote');
+            if (!input || !minus || !plus) return;
+
+            var max = parseInt(input.max, 10) || 1;
+            var limit = parseInt(input.getAttribute('data-limit'), 10);
+            var holding = parseInt(input.getAttribute('data-holding'), 10);
+            var free = parseInt(input.getAttribute('data-free'), 10);
+
+            function reason() {
+                return max >= free
+                    ? 'Max reached: only ' + free + ' unit(s) are free.'
+                    : 'Max reached: the limit is ' + limit + ' item(s) and you have ' + holding + ' in progress.';
+            }
+
+            function set(value) {
+                var v = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
+                input.value = v;
+                minus.disabled = v <= 1;
+                plus.disabled = v >= max;
+                note.textContent = v >= max ? reason() : '';
+                note.classList.toggle('d-none', v < max);
+            }
+
+            minus.addEventListener('click', function () { set(parseInt(input.value, 10) - 1); });
+            plus.addEventListener('click', function () { set(parseInt(input.value, 10) + 1); });
+            input.addEventListener('change', function () { set(input.value); });
+            set(input.value);
+        })();
+
         (function () {
             var DEFAULT_HOURS = @rules.DefaultDurationHours;
             var MAX_DAYS = @rules.MaxDurationDays;

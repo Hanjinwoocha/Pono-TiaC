@@ -58,10 +58,19 @@ namespace ASI.Basecode.WebApp.Controllers
         {
             const int pageSize = 5;
 
+            // Status is applied to whole models below, so units are fetched without it
             var catalog = _equipmentService.GetDashboardSummary(
-                search, categoryId, status);
+                search, categoryId, null);
+            catalog.Status = status;
 
-            var allItems = catalog.Items.ToList();
+            // One row per model ("3 of 5 available") instead of one per physical unit
+            var allItems = EquipmentGrouping.Group(catalog.Items, _equipmentService.GetReservedUnitIds())
+                .OrderBy(g => g.Representative.BrandModel)
+                .ToList();
+            if (status == "available")
+                allItems = allItems.Where(g => g.IsAvailable).ToList();
+            else if (status == "borrowed")
+                allItems = allItems.Where(g => !g.IsAvailable).ToList();
 
             var totalPages = Math.Max(
                 1,
@@ -108,47 +117,47 @@ namespace ASI.Basecode.WebApp.Controllers
             string sort,
             int page = 1)
         {
-            IEnumerable<EquipmentItem> items =
-                _equipmentService.GetAllEquipment()
-                    .ToList()
-                    .Where(i =>
-                        i.Status == "available" ||
-                        i.Status == "borrowed");
+            var units = _equipmentService.GetAllEquipment()
+                .Where(i =>
+                    i.Status == "available" ||
+                    i.Status == "borrowed");
+
+            // One card per model, with how many of its units are free
+            IEnumerable<EquipmentGroup> items = EquipmentGrouping.Group(units, _equipmentService.GetReservedUnitIds());
 
             if (!string.IsNullOrWhiteSpace(search))
             {
                 var term = search.Trim();
 
-                items = items.Where(i =>
-                    (i.BrandModel ?? "").Contains(
+                items = items.Where(g =>
+                    (g.Representative.BrandModel ?? "").Contains(
                         term, StringComparison.OrdinalIgnoreCase) ||
-                    (i.ItemCode ?? "").Contains(
+                    (g.Representative.Category?.CategoryName ?? "").Contains(
                         term, StringComparison.OrdinalIgnoreCase) ||
-                    (i.Category?.CategoryName ?? "").Contains(
-                        term, StringComparison.OrdinalIgnoreCase));
+                    g.Units.Any(u => (u.ItemCode ?? "").Contains(
+                        term, StringComparison.OrdinalIgnoreCase)));
             }
 
             if (categoryId.HasValue)
             {
-                items = items.Where(i =>
-                    i.CategoryId == categoryId.Value);
+                items = items.Where(g =>
+                    g.Representative.CategoryId == categoryId.Value);
             }
 
+            // Available = at least one unit free; Currently Borrowed = every unit is out
             if (status == "available")
             {
-                items = items.Where(i =>
-                    i.Status == "available");
+                items = items.Where(g => g.IsAvailable);
             }
             else if (status == "borrowed")
             {
-                items = items.Where(i =>
-                    i.Status == "borrowed");
+                items = items.Where(g => !g.IsAvailable);
             }
 
             items = sort == "category"
-                ? items.OrderBy(i => i.Category?.CategoryName)
-                    .ThenBy(i => i.BrandModel)
-                : items.OrderBy(i => i.BrandModel);
+                ? items.OrderBy(g => g.Representative.Category?.CategoryName)
+                    .ThenBy(g => g.Representative.BrandModel)
+                : items.OrderBy(g => g.Representative.BrandModel);
 
             const int pageSize = 6;
 
@@ -227,8 +236,8 @@ namespace ASI.Basecode.WebApp.Controllers
         /// </summary>
         public IActionResult EquipmentDetails(int id)
         {
-            var item = _equipmentService.GetAllEquipment()
-                .FirstOrDefault(i => i.Id == id);
+            var all = _equipmentService.GetAllEquipment().ToList();
+            var item = all.FirstOrDefault(i => i.Id == id);
 
             // Items still waiting for a category are not visible to students
             if (item == null || ItemStatuses.AwaitingCategory.Contains(item.Status))
@@ -239,8 +248,24 @@ namespace ASI.Basecode.WebApp.Controllers
                 return RedirectToAction(nameof(Equipment));
             }
 
-            ViewBag.Rules = _settingsService.Get();
-            return View(item);
+            // The page shows the whole model: the opened unit plus the other units in circulation.
+            // A request is for the model; the system picks a free unit when it is sent.
+            var key = EquipmentGrouping.Key(item);
+            var group = EquipmentGrouping.Group(all.Where(u =>
+                    EquipmentGrouping.Key(u) == key &&
+                    (u.Id == item.Id || u.Status == "available" || u.Status == "borrowed")),
+                    _equipmentService.GetReservedUnitIds())
+                .First();
+
+            ViewBag.Group = group;
+            var rules = _settingsService.Get();
+            ViewBag.Rules = rules;
+
+            // How many more items the student may request under the custodian's limit
+            var holding = _reservationService.CountHoldingForUser(CurrentUserCode);
+            ViewBag.Holding = holding;
+            ViewBag.CanRequest = Math.Max(0, rules.MaxActiveItems - holding);
+            return View(group.Representative);
         }
 
         /// <summary>
@@ -251,13 +276,15 @@ namespace ASI.Basecode.WebApp.Controllers
         public IActionResult Reserve(
             int equipmentItemId,
             DateTime pickupDate,
-            DateTime returnDate)
+            DateTime returnDate,
+            int quantity = 1)
         {
             var result = _reservationService.CreateReservation(
                 CurrentUserCode,
                 equipmentItemId,
                 pickupDate,
-                returnDate);
+                returnDate,
+                quantity);
 
             if (result.Success)
             {
@@ -273,6 +300,7 @@ namespace ASI.Basecode.WebApp.Controllers
                 TempData["ReservePickup"] = pickupDate.ToString("yyyy-MM-dd'T'HH:mm");
             if (returnDate != default)
                 TempData["ReserveReturn"] = returnDate.ToString("yyyy-MM-dd'T'HH:mm");
+            TempData["ReserveQuantity"] = quantity;
 
             return RedirectToAction(
                 nameof(EquipmentDetails),

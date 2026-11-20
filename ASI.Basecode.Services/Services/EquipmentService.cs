@@ -59,7 +59,11 @@ namespace ASI.Basecode.Services.Services
             suggestion == null || suggestion.Length < 2 || suggestion.Length > 100;
 
         // ---------- Add ----------
-        public ServiceResult AddEquipment(EquipmentItem item, string custodianCode = null)
+        public const int MaxUnitsPerAdd = 50;
+        private const int ItemCodeMaxLength = 50;
+
+        public ServiceResult AddEquipment(EquipmentItem item, string custodianCode = null, int quantity = 1,
+                                          IList<string> serialNumbers = null)
         {
             item.Id = 0;
 
@@ -73,11 +77,59 @@ namespace ASI.Basecode.Services.Services
             if (string.IsNullOrEmpty(item.ItemCode) || string.IsNullOrEmpty(item.BrandModel))
                 return ServiceResult.Fail("Item code and brand & model are required.");
 
+            if (quantity < 1 || quantity > MaxUnitsPerAdd)
+                return ServiceResult.Fail($"Quantity must be between 1 and {MaxUnitsPerAdd}.");
+
             item.SerialNumber = Optional(item.SerialNumber);
             item.StorageLocation = Optional(item.StorageLocation);
 
-            if (_equipmentRepository.EquipmentExists(item.ItemCode))
-                return ServiceResult.Fail($"The item code \"{item.ItemCode}\" is already in use.");
+            // Several units: each gets the code <ItemCode>-01, -02, ... and its own record
+            var codes = quantity == 1
+                ? new List<string> { item.ItemCode }
+                : Enumerable.Range(1, quantity).Select(n => $"{item.ItemCode}-{n:D2}").ToList();
+
+            // Several units: one serial per unit, in order (unit 1 gets the first). Blank = no serial yet.
+            var unitSerials = new List<string>();
+            if (quantity > 1)
+            {
+                if (item.ItemCode.Length > ItemCodeMaxLength - 3)
+                    return ServiceResult.Fail($"When adding several units, the item code can be at most {ItemCodeMaxLength - 3} characters (a number like -01 is added to it).");
+
+                unitSerials = (serialNumbers ?? new List<string>()).Select(Optional).ToList();
+                while (unitSerials.Count > 0 && unitSerials[unitSerials.Count - 1] == null)
+                    unitSerials.RemoveAt(unitSerials.Count - 1);   // trailing blank lines don't count
+
+                if (unitSerials.Count > quantity)
+                    return ServiceResult.Fail($"You entered {unitSerials.Count} serial numbers for {quantity} units. Enter one per unit, or fewer and add the rest later.");
+
+                var tooLong = unitSerials.FirstOrDefault(s => s != null && s.Length > 100);
+                if (tooLong != null)
+                    return ServiceResult.Fail("Each serial number can be at most 100 characters.");
+
+                var repeated = unitSerials.Where(s => s != null)
+                                          .GroupBy(s => s, StringComparer.OrdinalIgnoreCase)
+                                          .FirstOrDefault(g => g.Count() > 1);
+                if (repeated != null)
+                    return ServiceResult.Fail($"The serial number \"{repeated.Key}\" is entered more than once.");
+
+                var entered = unitSerials.Where(s => s != null).ToList();
+                var takenSerial = _equipmentRepository.GetEquipmentItems()
+                    .Where(e => entered.Contains(e.SerialNumber))
+                    .Select(e => e.SerialNumber)
+                    .FirstOrDefault();
+                if (takenSerial != null)
+                    return ServiceResult.Fail($"The serial number \"{takenSerial}\" is already in use.");
+
+                item.SerialNumber = null;   // the single serial field is for single units only
+
+                // "Other" sends each unit to the admin separately, so it is only for single units
+                if (!item.CategoryId.HasValue)
+                    return ServiceResult.Fail("To add several units at once, choose a category. For a new category, add one unit first; once the admin approves its category, add the rest.");
+            }
+
+            var takenCode = codes.FirstOrDefault(_equipmentRepository.EquipmentExists);
+            if (takenCode != null)
+                return ServiceResult.Fail($"The item code \"{takenCode}\" is already in use.");
 
             if (item.SerialNumber != null &&
                 _equipmentRepository.GetEquipmentItems().Any(e => e.SerialNumber == item.SerialNumber))
@@ -114,16 +166,61 @@ namespace ASI.Basecode.Services.Services
 
             try
             {
-                _equipmentRepository.AddEquipment(item);
+                if (quantity == 1)
+                {
+                    _equipmentRepository.AddEquipment(item);
+                }
+                else
+                {
+                    // Copies of the filled-in item, one per code; they share the photo file
+                    var units = codes.Select((code, index) => new EquipmentItem
+                    {
+                        ItemCode = code,
+                        BrandModel = item.BrandModel,
+                        CategoryId = item.CategoryId,
+                        CustodianId = item.CustodianId,
+                        SerialNumber = index < unitSerials.Count ? unitSerials[index] : null,
+                        StorageLocation = item.StorageLocation,
+                        ConditionRating = item.ConditionRating,
+                        Status = item.Status,
+                        ImagePath = item.ImagePath,
+                        CreatedTime = item.CreatedTime,
+                        UpdatedTime = item.UpdatedTime,
+                        CreatedBy = item.CreatedBy,
+                        UpdatedBy = item.UpdatedBy
+                    }).ToList();
+
+                    _equipmentRepository.AddEquipmentRange(units);
+                }
             }
             catch (Exception)
             {
                 return ServiceResult.Fail("Could not save the item. The item code or serial number may already be in use.");
             }
 
+            if (quantity > 1)
+                return ServiceResult.Ok($"{quantity} units registered ({codes.First()} to {codes.Last()}).");
+
             return ServiceResult.Ok(item.Status == "pending_category"
                 ? "Item saved and sent to the admin for category review. It will be available to students once the category is approved."
                 : "Equipment asset registered successfully.");
+        }
+
+        public HashSet<int> GetReservedUnitIds()
+        {
+            // Past its return time it is about to be expired, so it no longer holds the unit
+            var now = DateTime.Now;
+            return _equipmentRepository.GetReservations()
+                .Where(r => r.Status == "approved" && r.BorrowingTransaction == null && r.EstimatedReturnDate > now)
+                .Select(r => r.EquipmentItemId)
+                .Distinct()
+                .ToList()
+                .ToHashSet();
+        }
+
+        public bool ImageInUse(string imagePath, int exceptItemId)
+        {
+            return !string.IsNullOrEmpty(imagePath) && _equipmentRepository.ImagePathInUse(imagePath, exceptItemId);
         }
 
         // ---------- Edit ----------
@@ -291,11 +388,14 @@ namespace ASI.Basecode.Services.Services
                 .Distinct()
                 .ToList();
 
+            // On the shelf but promised to a student (approved, waiting for pickup): not available
+            var reservedIds = GetReservedUnitIds().ToList();
+
             var model = new DashboardViewModel
             {
                 TotalEquipment = items.Count(),
                 CurrentlyBorrowed = items.Count(i => borrowedIds.Contains(i.Id)),
-                AvailableItems = items.Count(i => i.Status == "available" && !borrowedIds.Contains(i.Id)),
+                AvailableItems = items.Count(i => i.Status == "available" && !borrowedIds.Contains(i.Id) && !reservedIds.Contains(i.Id)),
                 PendingRequests = pending.Count(),
                 BorrowedItemIds = borrowedIds,
                 Categories = _equipmentRepository.GetCategories().OrderBy(c => c.CategoryName).ToList(),
@@ -321,7 +421,7 @@ namespace ASI.Basecode.Services.Services
 
             if (status == "available")
             {
-                filtered = filtered.Where(i => i.Status == "available" && !borrowedIds.Contains(i.Id));
+                filtered = filtered.Where(i => i.Status == "available" && !borrowedIds.Contains(i.Id) && !reservedIds.Contains(i.Id));
             }
             else if (status == "borrowed")
             {

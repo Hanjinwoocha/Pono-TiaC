@@ -16,6 +16,10 @@ namespace ASI.Basecode.Data.Interfaces
         IQueryable<BorrowingTransaction> GetBorrowingTransactions();
         bool EquipmentExists(string itemCode);
         void AddEquipment(EquipmentItem equipment);
+        // Several units in one save: all are added, or none
+        void AddEquipmentRange(IEnumerable<EquipmentItem> equipment);
+        // True when another item (archived ones included) still uses this photo file
+        bool ImagePathInUse(string imagePath, int exceptItemId);
         void UpdateEquipment(EquipmentItem equipment);
         void DeleteEquipment(EquipmentItem equipment);
 

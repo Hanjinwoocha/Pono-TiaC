@@ -114,6 +114,7 @@ namespace ASI.Basecode.Services.Services
                     CategoryCode = i.Category?.CategoryCode,
                     SerialNumber = i.SerialNumber,
                     StorageLocation = i.StorageLocation,
+                    ImagePath = i.ImagePath,
                     Status = status,
                     Condition = i.ConditionRating,
                     BorrowerName = loan == null ? null : (loan.Borrower.FirstName + " " + loan.Borrower.LastName).Trim(),

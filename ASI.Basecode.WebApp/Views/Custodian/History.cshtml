@@ -452,6 +452,7 @@
                         <th>Item</th>
                         <th>Issue</th>
                         <th>Notes</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody id="tbody-penalties">
@@ -477,11 +478,27 @@
                                 }
                             </td>
                             <td>@(string.IsNullOrWhiteSpace(t.DamageNotes) ? "-" : t.DamageNotes)</td>
+                            <td>
+                                @* Resolved once every charge on this loan is marked paid / replaced in Student Charges *@
+                                @{ var penaltyStatus = HistoryPageViewModel.PenaltyStatus(t, DateTime.Now); }
+                                @if (penaltyStatus == HistoryPageViewModel.PenaltyResolved)
+                                {
+                                    <span class="badge bg-success">Resolved</span>
+                                }
+                                else if (penaltyStatus == HistoryPageViewModel.PenaltyNotResolved)
+                                {
+                                    <span class="badge bg-danger">Not Resolved</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-secondary">No charge</span>
+                                }
+                            </td>
                         </tr>
                     }
                     @if (!Model.PenaltyRows.Any())
                     {
-                        <tr class="empty-row"><td colspan="5" class="text-center text-muted py-4">No late returns or damaged assets.</td></tr>
+                        <tr class="empty-row"><td colspan="6" class="text-center text-muted py-4">No late returns or damaged assets.</td></tr>
                     }
                 </tbody>
             </table>
