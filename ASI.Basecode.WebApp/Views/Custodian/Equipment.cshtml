@@ -287,7 +287,7 @@
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="dash-stat-label mb-1">ITEM CODE / ASSET TAG *</label>
-                            <input type="text" name="ItemCode" class="form-control dash-search-input" placeholder="e.g. EQ-CAM-005" maxlength="50" required />
+                            <input type="text" name="ItemCode" id="addItemCode" class="form-control dash-search-input" placeholder="e.g. EQ-CAM-005" maxlength="50" required />
                         </div>
 
                         <div class="col-md-6">
@@ -315,8 +315,23 @@
                         </div>
 
                         <div class="col-md-6">
+                            <label class="dash-stat-label mb-1" for="addQuantity">QUANTITY (UNITS) *</label>
+                            <input type="number" name="quantity" id="addQuantity" class="form-control dash-search-input"
+                                   value="1" min="1" max="50" step="1" required />
+                            <div class="form-text dash-muted" id="quantityHint">Each unit gets its own record and code.</div>
+                        </div>
+
+                        <div class="col-md-6" id="serialSingleWrap">
                             <label class="dash-stat-label mb-1">SERIAL NUMBER</label>
-                            <input type="text" name="SerialNumber" class="form-control dash-search-input" placeholder="Leave blank if not applicable" maxlength="100" />
+                            <input type="text" name="SerialNumber" id="addSerialNumber" class="form-control dash-search-input" placeholder="Leave blank if not applicable" maxlength="100" />
+                        </div>
+
+                        @* Shown instead of the single field when Quantity > 1 *@
+                        <div class="col-12 d-none" id="serialListWrap">
+                            <label class="dash-stat-label mb-1" for="addSerialList">SERIAL NUMBERS (ONE PER LINE, IN UNIT ORDER)</label>
+                            <textarea name="serialNumbers" id="addSerialList" class="form-control dash-search-input" rows="4"
+                                      placeholder="SN-1001&#10;SN-1002&#10;SN-1003"></textarea>
+                            <div class="form-text dash-muted" id="serialListHint">Line 1 goes to the first unit, line 2 to the second, and so on. Leave a line blank (or stop early) to add that serial later.</div>
                         </div>
 
                         <div class="col-md-6">
@@ -532,8 +547,72 @@
                 sync();
                 return sync;
             }
-            wireOther('CategoryId', 'suggestedWrap', 'suggestedInput');
+            var syncAddOther = wireOther('CategoryId', 'suggestedWrap', 'suggestedInput');
             var syncEdit = wireOther('editCategoryId', 'editSuggestedWrap', 'editSuggestedInput');
+
+            // Quantity > 1: show the codes that will be created, switch the serial field to one-per-line,
+            // and turn off "Other" (it only applies to a single unit). The server checks the same rules.
+            (function () {
+                var qty = document.getElementById('addQuantity');
+                var code = document.getElementById('addItemCode');
+                var serial = document.getElementById('addSerialNumber');
+                var singleWrap = document.getElementById('serialSingleWrap');
+                var listWrap = document.getElementById('serialListWrap');
+                var list = document.getElementById('addSerialList');
+                var listHint = document.getElementById('serialListHint');
+                var cat = document.getElementById('CategoryId');
+                var hint = document.getElementById('quantityHint');
+                var otherOption = cat.querySelector('option[value="0"]');
+                if (!qty) return;
+
+                function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+                function syncSerials() {
+                    var n = parseInt(qty.value, 10) || 1;
+                    var lines = list.value.split('\n');
+                    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();   // trailing blanks don't count
+                    var filled = lines.filter(function (l) { return l.trim(); }).length;
+                    var base = (code.value || '').trim() || 'CODE';
+
+                    if (lines.length > n) {
+                        list.setCustomValidity('You entered ' + lines.length + ' serial numbers for ' + n + ' units.');
+                        listHint.textContent = lines.length + ' lines for ' + n + ' units. Remove the extra lines.';
+                        listHint.classList.add('text-danger');
+                        return;
+                    }
+                    list.setCustomValidity('');
+                    listHint.classList.remove('text-danger');
+                    listHint.textContent = filled === 0
+                        ? 'Line 1 goes to ' + base + '-01, line 2 to ' + base + '-02, and so on. Leave a line blank (or stop early) to add that serial later.'
+                        : filled + ' of ' + n + ' units have a serial. Line 1 = ' + base + '-01' +
+                          (lines.length > 1 ? ', line ' + lines.length + ' = ' + base + '-' + pad(lines.length) : '') + '.';
+                }
+
+                function sync() {
+                    var n = parseInt(qty.value, 10) || 1;
+                    var many = n > 1;
+                    var base = (code.value || '').trim() || 'CODE';
+
+                    // One serial box for a single unit, a one-per-line list for several
+                    singleWrap.classList.toggle('d-none', many);
+                    listWrap.classList.toggle('d-none', !many);
+                    serial.disabled = many;
+                    list.disabled = !many;
+                    if (many) serial.value = '';
+
+                    otherOption.disabled = many;
+                    if (many && cat.value === '0') { cat.value = ''; syncAddOther(); }
+
+                    hint.textContent = many
+                        ? 'Creates ' + n + ' units: ' + base + '-01 to ' + base + '-' + pad(n) + '. Choose a listed category.'
+                        : 'Each unit gets its own record and code.';
+                    syncSerials();
+                }
+                qty.addEventListener('input', sync);
+                code.addEventListener('input', sync);
+                list.addEventListener('input', syncSerials);
+                sync();
+            })();
 
             // Fill the Edit modal from the clicked row's data-* attributes
             var editModal = document.getElementById('editEquipmentModal');

@@ -6,6 +6,7 @@ using ASI.Basecode.Data.Interfaces;
 using ASI.Basecode.Data.Models;
 using ASI.Basecode.Services.Interfaces;
 using ASI.Basecode.Services.ServiceModels;
+using Microsoft.EntityFrameworkCore;
 
 namespace ASI.Basecode.Services.Services
 {
@@ -227,16 +228,22 @@ namespace ASI.Basecode.Services.Services
                     .OrderByDescending(t => t.ActualPickupTime)
                     .ToList(),
 
-                PenaltyRows = baseQ
-                    .Where(t =>
-                        t.IsOverdue ||
-                        t.ReturnCondition == "needs_maintenance" ||
-                        (t.ActualReturnTime == null &&
-                         t.Reservation.EstimatedReturnDate < now))
-                    .OrderByDescending(t => t.ActualPickupTime)
-                    .Take(10)
-                    .ToList()
+                PenaltyRows = PenaltyRowsQuery(baseQ, now).ToList()
             };
+        }
+
+        // Loans that were late, are still out past their due date, or came back damaged, newest first,
+        // with their penalties loaded so each row can show Resolved / Not Resolved
+        private static IQueryable<BorrowingTransaction> PenaltyRowsQuery(IQueryable<BorrowingTransaction> baseQ, DateTime now)
+        {
+            return baseQ
+                .Include(t => t.Penalties)
+                .Where(t =>
+                    t.IsOverdue ||
+                    t.ReturnCondition == "needs_maintenance" ||
+                    (t.ActualReturnTime == null &&
+                     t.Reservation.EstimatedReturnDate < now))
+                .OrderByDescending(t => t.ActualPickupTime);
         }
 
         // Existing Custodian CSV export.
@@ -282,6 +289,34 @@ namespace ASI.Basecode.Services.Services
 
                 sb.AppendLine(string.Join(",", cells.Select(Csv)));
             }
+
+            // Second section: the Overdue & Damage Penalty Summary (same filters as above)
+            var now = DateTime.Now;
+            var penaltyRows = PenaltyRowsQuery(BuildBase(f, null, custodianCode), now).ToList();
+
+            sb.AppendLine();
+            sb.AppendLine("Overdue & Damage Penalty Summary");
+            sb.AppendLine("Transaction ID,Borrower ID,Borrower Name,Item Code,Equipment,Issue,Notes,Status");
+
+            foreach (var t in penaltyRows)
+            {
+                var cells = new[]
+                {
+                    HistoryPageViewModel.TxnCode(t),
+                    t.Borrower.UserId,
+                    $"{t.Borrower.FirstName} {t.Borrower.LastName}",
+                    t.EquipmentItem.ItemCode,
+                    t.EquipmentItem.BrandModel,
+                    string.Join("; ", HistoryPageViewModel.PenaltyIssues(t, now)),
+                    t.DamageNotes,
+                    HistoryPageViewModel.PenaltyStatus(t, now)
+                };
+
+                sb.AppendLine(string.Join(",", cells.Select(Csv)));
+            }
+
+            if (penaltyRows.Count == 0)
+                sb.AppendLine("No late returns or damaged assets.");
 
             // UTF-8 with BOM for Excel compatibility.
             return Encoding.UTF8.GetPreamble()

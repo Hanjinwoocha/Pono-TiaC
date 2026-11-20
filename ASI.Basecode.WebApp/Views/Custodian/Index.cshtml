@@ -176,7 +176,7 @@
             var isBorrowed = Model.BorrowedItemIds.Contains(item.Id);
             var hasPhoto = !string.IsNullOrEmpty(item.ImagePath);
             <div class="col-sm-6 col-xl-3">
-                <div class="dash-card cd-card h-100">
+                <div class="dash-card cd-card h-100 justify-content-between">
                     <div>
                         <div class="cd-media">
                             @if (hasPhoto)

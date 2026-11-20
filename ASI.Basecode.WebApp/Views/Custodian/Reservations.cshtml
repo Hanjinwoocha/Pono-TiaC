@@ -33,9 +33,29 @@
             .res-card.is-warning { border-color: var(--bs-warning); }
             .res-card.is-overdue { border-color: var(--bs-danger); border-width: 2px; }
 
+        /* Details on the left, status badge (if any) and photo on the right */
+        .res-body {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+
+            .res-body .res-details {
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+
+            .res-body .res-side {
+                display: flex;
+                flex-direction: column;
+                align-items: flex-end;
+                gap: .5rem;
+                flex-shrink: 0;
+            }
+
         .res-thumb {
-            width: 64px;
-            height: 64px;
+            width: 96px;
+            height: 96px;
             border-radius: 8px;
             overflow: hidden;
             background: #f1d3c0;
@@ -52,6 +72,10 @@
                 height: 100%;
                 object-fit: cover;
             }
+
+        .res-pager .page-link {
+            cursor: pointer;
+        }
     </style>
 }
 
@@ -99,29 +123,30 @@
     </div>
 </form>
 
-<div class="row g-4">
+<div class="row g-4 align-items-start">  @* each card fits its own content (no stretching to match the other column) *@
     <div class="col-xl-6">
-        <div class="dash-card h-100">
+        <div class="dash-card">
             <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
                 <h4 class="dash fs-5 fw-bold m-0"><i class="bi bi-hourglass-split text-warning me-1"></i> Pending Approval Queue</h4>
                 <span class="badge bg-danger rounded-pill">@Model.Pending.Count Pending</span>
             </div>
 
-            <div class="d-flex flex-column gap-3 mb-4">
+            <div class="d-flex flex-column gap-3" data-paged="1">
                 @foreach (var r in Model.Pending)
                 {
-                    <div class="p-3 res-card">
-                        <div class="d-flex justify-content-between align-items-start mb-2 gap-3">
-                            @{ Thumb(r.EquipmentItem); }
-                            <div class="flex-grow-1">
+                    <div class="p-3 res-card" data-page-item>
+                        <div class="res-body mb-3">
+                            <div class="res-details">
                                 <h5 class="fw-bold mb-0">@r.EquipmentItem.BrandModel</h5>
-                                <span class="text-muted small">Code: @r.EquipmentItem.ItemCode</span>
+                                <span class="text-muted small d-block mb-2">Code: @r.EquipmentItem.ItemCode</span>
+                                <div class="small text-muted mb-2"><i class="bi bi-person-circle me-1"></i> <strong>@r.Borrower.FirstName @r.Borrower.LastName</strong> (@r.Borrower.UserId)</div>
+                                <div class="small text-muted mb-2"><i class="bi bi-calendar-event me-1"></i> Pickup: <strong>@($"{r.RequestedPickupDate:MMM d, yyyy - h:mm tt}")</strong></div>
+                                <div class="small text-muted"><i class="bi bi-clock me-1"></i> Est. Return: <strong>@($"{r.EstimatedReturnDate:MMM d, yyyy - h:mm tt}")</strong></div>
                             </div>
-                            <span class="badge bg-warning text-dark">Pending</span>
+                            <div class="res-side">
+                                @{ Thumb(r.EquipmentItem); }
+                            </div>
                         </div>
-                        <div class="small text-muted mb-2"><i class="bi bi-person-circle me-1"></i> <strong>@r.Borrower.FirstName @r.Borrower.LastName</strong> (@r.Borrower.UserId)</div>
-                        <div class="small text-muted mb-2"><i class="bi bi-calendar-event me-1"></i> Pickup: <strong>@($"{r.RequestedPickupDate:MMM d, yyyy - h:mm tt}")</strong></div>
-                        <div class="small text-muted mb-3"><i class="bi bi-clock me-1"></i> Est. Return: <strong>@($"{r.EstimatedReturnDate:MMM d, yyyy - h:mm tt}")</strong></div>
                         <div class="d-flex gap-2 border-top pt-2">
                             <button type="button" class="btn btn-sm btn-outline-danger w-50" data-bs-toggle="modal" data-bs-target="#declineModal" data-id="@r.Id">
                                 <i class="bi bi-x-circle me-1"></i> Decline
@@ -138,28 +163,43 @@
                 }
             </div>
 
-            <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+            <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3 mt-4">
                 <h4 class="dash fs-5 fw-bold m-0"><i class="bi bi-bag-check text-primary me-1"></i> Approved - Awaiting Pickup</h4>
                 <span class="badge bg-primary rounded-pill">@Model.Approved.Count Approved</span>
             </div>
 
-            <div class="d-flex flex-column gap-3">
+            <div class="d-flex flex-column gap-3" data-paged="1">
                 @foreach (var r in Model.Approved)
                 {
-                    <div class="p-3 res-card is-approved">
-                        <div class="d-flex justify-content-between align-items-start mb-2 gap-3">
-                            @{ Thumb(r.EquipmentItem); }
-                            <div class="flex-grow-1">
+                    <div class="p-3 res-card is-approved" data-page-item>
+                        <div class="res-body mb-3">
+                            <div class="res-details">
                                 <h5 class="fw-bold mb-0">@r.EquipmentItem.BrandModel</h5>
-                                <span class="text-muted small">Code: @r.EquipmentItem.ItemCode</span>
+                                <span class="text-muted small d-block mb-2">Code: @r.EquipmentItem.ItemCode</span>
+                                <div class="small text-muted mb-2"><i class="bi bi-person-circle me-1"></i> <strong>@r.Borrower.FirstName @r.Borrower.LastName</strong> (@r.Borrower.UserId)</div>
+                                <div class="small text-muted mb-2"><i class="bi bi-calendar-event me-1"></i> Pickup: <strong>@($"{r.RequestedPickupDate:MMM d, yyyy - h:mm tt}")</strong></div>
+                                <div class="small text-muted"><i class="bi bi-clock me-1"></i> Est. Return: <strong>@($"{r.EstimatedReturnDate:MMM d, yyyy - h:mm tt}")</strong></div>
                             </div>
-                            <span class="badge bg-primary">Approved</span>
+                            <div class="res-side">
+                                @{ Thumb(r.EquipmentItem); }
+                            </div>
                         </div>
-                        <div class="small text-muted mb-2"><i class="bi bi-person-circle me-1"></i> <strong>@r.Borrower.FirstName @r.Borrower.LastName</strong> (@r.Borrower.UserId)</div>
-                        <div class="small text-muted mb-3"><i class="bi bi-calendar-event me-1"></i> Pickup: <strong>@($"{r.RequestedPickupDate:MMM d, yyyy - h:mm tt}")</strong></div>
                         <form method="post" asp-controller="Custodian" asp-action="ReleaseItem">
                             @Html.AntiForgeryToken()
                             <input type="hidden" name="id" value="@r.Id" />
+                            @if (Model.ReleaseUnits.TryGetValue(r.Id, out var units))
+                            {
+                                @* Several units of this model are free: hand over whichever one is at hand *@
+                                <label class="dash-stat-label mb-1" for="unit-@r.Id">Unit to hand over</label>
+                                <select name="unitId" id="unit-@r.Id" class="form-select form-select-sm dash-search-input mb-2">
+                                    @foreach (var u in units)
+                                    {
+                                        <option value="@u.Id" selected="@(u.Id == r.EquipmentItemId)">
+                                            @u.ItemCode@(u.Id == r.EquipmentItemId ? " (assigned)" : "")
+                                        </option>
+                                    }
+                                </select>
+                            }
                             <button type="submit" class="btn btn-sm dash-btn-reserve w-100 fw-bold">
                                 <i class="bi bi-box-arrow-right me-1"></i> Release Item to Borrower
                             </button>
@@ -178,13 +218,13 @@
     </div>
 
     <div class="col-xl-6">
-        <div class="dash-card h-100">
+        <div class="dash-card">
             <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
                 <h4 class="dash fs-5 fw-bold m-0"><i class="bi bi-box-arrow-up-right text-success me-1"></i> Active Borrowings (Out on Loan)</h4>
                 <span class="badge bg-success rounded-pill">@Model.Active.Count Active</span>
             </div>
 
-            <div class="d-flex flex-column gap-3">
+            <div class="d-flex flex-column gap-3" data-paged="2">
                 @foreach (var t in Model.Active)
                 {
                     var now = DateTime.Now;
@@ -192,13 +232,16 @@
                     var pastDue = due.HasValue && due.Value < now;
                     var overdue = pastDue && due.Value.AddMinutes(Model.GraceMinutes) < now;
                     var dueSoon = due.HasValue && !pastDue && due.Value <= now.AddHours(Model.DueSoonHours);
-                    <div class="p-3 res-card @(overdue ? "is-overdue" : (pastDue || dueSoon) ? "is-warning" : "is-active")">
-                        <div class="d-flex justify-content-between align-items-start mb-2 gap-3">
-                            @{ Thumb(t.EquipmentItem); }
-                            <div class="flex-grow-1">
+                    <div class="p-3 res-card @(overdue ? "is-overdue" : (pastDue || dueSoon) ? "is-warning" : "is-active")" data-page-item>
+                        <div class="res-body mb-3">
+                            <div class="res-details">
                                 <h5 class="fw-bold mb-0">@t.EquipmentItem.BrandModel</h5>
-                                <span class="text-muted small">Code: @t.EquipmentItem.ItemCode</span>
+                                <span class="text-muted small d-block mb-2">Code: @t.EquipmentItem.ItemCode</span>
+                                <div class="small text-muted mb-2"><i class="bi bi-person-check me-1"></i> Issued To: <strong>@t.Borrower.FirstName @t.Borrower.LastName</strong> (@t.Borrower.UserId)</div>
+                                <div class="small text-muted mb-2"><i class="bi bi-box-arrow-right me-1"></i> Handover Time: <strong>@($"{t.ActualPickupTime:MMM d, yyyy - h:mm tt}")</strong></div>
+                                <div class="small text-muted"><i class="bi bi-alarm me-1"></i> Due Return: <strong class="@(overdue ? "text-danger" : "")">@($"{due:MMM d, yyyy - h:mm tt}")</strong></div>
                             </div>
+                            <div class="res-side">
                             @if (overdue)
                             {
                                 <span class="badge bg-danger">Overdue</span>
@@ -215,10 +258,9 @@
                             {
                                 <span class="dash-pill is-borrowed">Borrowed</span>
                             }
+                                @{ Thumb(t.EquipmentItem); }
+                            </div>
                         </div>
-                        <div class="small text-muted mb-2"><i class="bi bi-person-check me-1"></i> Issued To: <strong>@t.Borrower.FirstName @t.Borrower.LastName</strong> (@t.Borrower.UserId)</div>
-                        <div class="small text-muted mb-2"><i class="bi bi-box-arrow-right me-1"></i> Handover Time: <strong>@($"{t.ActualPickupTime:MMM d, yyyy - h:mm tt}")</strong></div>
-                        <div class="small text-muted mb-3"><i class="bi bi-alarm me-1"></i> Due Return: <strong class="@(overdue ? "text-danger" : "")">@($"{due:MMM d, yyyy - h:mm tt}")</strong></div>
                         <button type="button" class="btn btn-sm btn-outline-success w-100 fw-bold" data-bs-toggle="modal" data-bs-target="#returnModal" data-id="@t.Id">
                             <i class="bi bi-box-arrow-in-down me-1"></i> Inspect & Mark as Returned
                         </button>
@@ -344,6 +386,52 @@
                 var field = modal.querySelector('.modal-id');
                 if (button && field) { field.value = button.getAttribute('data-id'); }
             });
+        });
+
+        // Pages each list (Pending, Approved, Active) so the cards don't grow endlessly.
+        // data-paged="N" = cards per page; the pager only appears when there is more than one page.
+        document.querySelectorAll('[data-paged]').forEach(function (list) {
+            var size = parseInt(list.getAttribute('data-paged'), 10) || 3;
+            var items = Array.prototype.filter.call(list.children, function (el) {
+                return el.hasAttribute('data-page-item');
+            });
+            var pages = Math.ceil(items.length / size);
+            if (pages <= 1) return;
+
+            var nav = document.createElement('nav');
+            nav.setAttribute('aria-label', 'Pages');
+            var ul = document.createElement('ul');
+            ul.className = 'pagination pagination-sm dash-pagination res-pager justify-content-center mt-3 mb-0';
+            nav.appendChild(ul);
+            list.parentNode.insertBefore(nav, list.nextSibling);
+
+            function pageButton(label, target, disabled, active, ariaLabel) {
+                var li = document.createElement('li');
+                li.className = 'page-item' + (disabled ? ' disabled' : '') + (active ? ' active' : '');
+                var a = document.createElement('a');
+                a.className = 'page-link';
+                a.textContent = label;
+                if (ariaLabel) a.setAttribute('aria-label', ariaLabel);
+                if (!disabled && !active) {
+                    a.addEventListener('click', function (e) { e.preventDefault(); show(target); });
+                }
+                li.appendChild(a);
+                return li;
+            }
+
+            function show(page) {
+                items.forEach(function (el, i) {
+                    el.classList.toggle('d-none', Math.floor(i / size) !== page);
+                });
+                ul.textContent = '';
+                ul.appendChild(pageButton('‹', page - 1, page === 0, false, 'Previous'));
+                for (var p = 0; p < pages; p++) {
+                    ul.appendChild(pageButton(String(p + 1), p, false, p === page));
+                }
+                ul.appendChild(pageButton('›', page + 1, page === pages - 1, false, 'Next'));
+            }
+
+            show(0);
         });
     </script>
 }

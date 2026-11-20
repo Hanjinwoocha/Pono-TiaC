@@ -49,6 +49,17 @@ namespace ASI.Basecode.Data.Repositories
             _context.SaveChanges();
         }
 
+        public void AddEquipmentRange(IEnumerable<EquipmentItem> equipment)
+        {
+            _context.EquipmentItems.AddRange(equipment);
+            _context.SaveChanges();   // one save, so it is all or nothing
+        }
+
+        public bool ImagePathInUse(string imagePath, int exceptItemId)
+        {
+            return _context.EquipmentItems.Any(e => e.Id != exceptItemId && e.ImagePath == imagePath);
+        }
+
         public void UpdateEquipment(EquipmentItem equipment)
         {
             _context.EquipmentItems.Update(equipment);

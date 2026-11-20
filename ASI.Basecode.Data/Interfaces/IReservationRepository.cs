@@ -20,6 +20,8 @@ namespace ASI.Basecode.Data.Interfaces
 
         // ---- Student reservation requests ----
         EquipmentItem GetEquipmentItemById(int id);
+        // Equipment that is not archived (includes Category); used to find other units of a model
+        IQueryable<EquipmentItem> GetEquipmentItems();
         void AddReservation(Reservation reservation);
         IQueryable<Penalty> GetPenalties();
         void AddPenalty(Penalty penalty);

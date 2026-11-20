@@ -14,7 +14,8 @@ namespace ASI.Basecode.Services.ServiceModels
         public List<Reservation> RecentReservations { get; set; } = new List<Reservation>();
 
         // ---- Pagination of the equipment table ----
-        public List<EquipmentItem> PagedItems { get; set; } = new List<EquipmentItem>();
+        // One row per model (several units of the same equipment are shown once)
+        public List<EquipmentGroup> PagedItems { get; set; } = new List<EquipmentGroup>();
         public int Page { get; set; } = 1;
         public int PageSize { get; set; } = 5;
         public int TotalPages { get; set; } = 1;

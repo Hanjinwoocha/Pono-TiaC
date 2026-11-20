@@ -107,17 +107,21 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach (var item in Model.PagedItems)
+                                @foreach (var group in Model.PagedItems)
                                 {
-                                    var isBorrowed = cat.BorrowedItemIds.Contains(item.Id);
-                                    var available = !isBorrowed && item.Status == "available";
+                                    // One row per model; several units of the same equipment are counted together
+                                    var item = group.Representative;
+                                    var multi = group.Total > 1;
+                                    var available = group.IsAvailable;
+                                    var allOut = group.Units.All(u => u.Status == "borrowed" || cat.BorrowedItemIds.Contains(u.Id));
+                                    var photo = group.ImagePath;
                                     <tr>
                                         <td>
                                             <a asp-controller="Student" asp-action="EquipmentDetails" asp-route-id="@item.Id"
                                                class="d-flex align-items-center text-decoration-none text-reset">
-                                                @if (!string.IsNullOrEmpty(item.ImagePath))
+                                                @if (!string.IsNullOrEmpty(photo))
                                                 {
-                                                    <img src="@item.ImagePath" alt="@item.BrandModel" loading="lazy"
+                                                    <img src="@photo" alt="@item.BrandModel" loading="lazy"
                                                          style="width:2.6rem;height:2.6rem;object-fit:cover;border-radius:8px;flex:0 0 auto;" />
                                                 }
                                                 else
@@ -128,14 +132,21 @@
                                                 }
                                                 <div class="ms-2">
                                                     <div class="fw-semibold">@item.BrandModel</div>
-                                                    <div class="dash-muted small">@item.ItemCode</div>
+                                                    <div class="dash-muted small">@(multi ? group.Total + " units" : item.ItemCode)</div>
                                                 </div>
                                             </a>
                                         </td>
                                         <td>@(item.Category?.CategoryName ?? "General")</td>
                                         <td class="text-end">
                                             <span class="dash-pill @(available ? "is-available" : "is-borrowed")">
-                                                @(isBorrowed ? "Currently Borrowed" : (available ? "Available" : item.Status))
+                                                @if (multi)
+                                                {
+                                                    @($"{group.AvailableCount} of {group.Total} available")
+                                                }
+                                                else
+                                                {
+                                                    @(available ? "Available" : (allOut ? "Currently Borrowed" : group.ReservedCount > 0 ? "Reserved" : item.Status))
+                                                }
                                             </span>
                                         </td>
                                     </tr>

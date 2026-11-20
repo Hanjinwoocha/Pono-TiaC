@@ -53,6 +53,7 @@ namespace ASI.Basecode.Services.ServiceModels
         public string CategoryCode { get; set; }
         public string SerialNumber { get; set; }
         public string StorageLocation { get; set; }
+        public string ImagePath { get; set; }     // item photo; null = show the category icon
         public string Status { get; set; }        // available | borrowed | maintenance
         public string Condition { get; set; }
 
