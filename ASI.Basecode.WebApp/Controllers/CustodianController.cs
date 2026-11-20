@@ -99,6 +99,9 @@ namespace ASI.Basecode.WebApp.Controllers
             ViewBag.TotalPages = totalPages;
             ViewBag.TotalItems = all.Count;
 
+            // Units per model, shown in the Add More Units popup ("currently 5 units")
+            ViewBag.ModelUnitCounts = all.GroupBy(EquipmentGrouping.Key).ToDictionary(g => g.Key, g => g.Count());
+
             PopulateCategoryList();
             return View("Equipment", all.Skip((page - 1) * EquipmentPageSize).Take(EquipmentPageSize).ToList());
         }
@@ -139,6 +142,20 @@ namespace ASI.Basecode.WebApp.Controllers
 
             TempData[result.Success ? "SuccessMessage" : "ErrorMessage"] = result.Message;
             return RedirectToAction(nameof(Equipment));
+        }
+
+        // Adds more units of an existing model (name, category and photo are copied from unit "id")
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult AddUnits(int id, int quantity = 1, string serialNumbers = null,
+                                      string conditionRating = null, string storageLocation = null, int page = 1)
+        {
+            var serials = (serialNumbers ?? "").Replace("\r\n", "\n").Split('\n').ToList();
+
+            var result = _equipmentService.AddUnits(id, CurrentUserCode, quantity, serials,
+                                                    conditionRating, storageLocation, CurrentUserCode ?? "Custodian");
+            TempData[result.Success ? "SuccessMessage" : "ErrorMessage"] = result.Message;
+            return RedirectToAction(nameof(Equipment), new { page });
         }
 
         [HttpPost]

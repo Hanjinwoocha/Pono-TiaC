@@ -31,7 +31,8 @@
 
 <div class="dash">
     <div class="mb-3">
-        <a asp-controller="Custodian" asp-action="Profile" class="btn dash-btn dash-btn-view">
+        @* Account/Profile sends each role to its own profile page (students and custodians both use this form) *@
+        <a asp-controller="Account" asp-action="Profile" class="btn dash-btn dash-btn-view">
             <i class="bi bi-arrow-left me-1"></i> Back to Profile
         </a>
     </div>

@@ -13,6 +13,9 @@ namespace ASI.Basecode.Services.Interfaces
         // serialNumbers (quantity > 1 only): one per unit, in order; blank entries leave that unit without one
         ServiceResult AddEquipment(EquipmentItem item, string custodianCode = null, int quantity = 1,
                                    IList<string> serialNumbers = null);
+        // Adds more units of the model sourceUnitDbId belongs to; codes continue its numbering (-06, -07, ...)
+        ServiceResult AddUnits(int sourceUnitDbId, string custodianCode, int quantity, IList<string> serialNumbers,
+                               string conditionRating, string storageLocation, string createdBy);
         // Units held by an approved reservation that hasn't been picked up (and hasn't expired)
         HashSet<int> GetReservedUnitIds();
 

@@ -95,30 +95,8 @@ namespace ASI.Basecode.Services.Services
                 if (item.ItemCode.Length > ItemCodeMaxLength - 3)
                     return ServiceResult.Fail($"When adding several units, the item code can be at most {ItemCodeMaxLength - 3} characters (a number like -01 is added to it).");
 
-                unitSerials = (serialNumbers ?? new List<string>()).Select(Optional).ToList();
-                while (unitSerials.Count > 0 && unitSerials[unitSerials.Count - 1] == null)
-                    unitSerials.RemoveAt(unitSerials.Count - 1);   // trailing blank lines don't count
-
-                if (unitSerials.Count > quantity)
-                    return ServiceResult.Fail($"You entered {unitSerials.Count} serial numbers for {quantity} units. Enter one per unit, or fewer and add the rest later.");
-
-                var tooLong = unitSerials.FirstOrDefault(s => s != null && s.Length > 100);
-                if (tooLong != null)
-                    return ServiceResult.Fail("Each serial number can be at most 100 characters.");
-
-                var repeated = unitSerials.Where(s => s != null)
-                                          .GroupBy(s => s, StringComparer.OrdinalIgnoreCase)
-                                          .FirstOrDefault(g => g.Count() > 1);
-                if (repeated != null)
-                    return ServiceResult.Fail($"The serial number \"{repeated.Key}\" is entered more than once.");
-
-                var entered = unitSerials.Where(s => s != null).ToList();
-                var takenSerial = _equipmentRepository.GetEquipmentItems()
-                    .Where(e => entered.Contains(e.SerialNumber))
-                    .Select(e => e.SerialNumber)
-                    .FirstOrDefault();
-                if (takenSerial != null)
-                    return ServiceResult.Fail($"The serial number \"{takenSerial}\" is already in use.");
+                var serialError = CheckSerials(serialNumbers, quantity, out unitSerials);
+                if (serialError != null) return ServiceResult.Fail(serialError);
 
                 item.SerialNumber = null;   // the single serial field is for single units only
 
@@ -204,6 +182,122 @@ namespace ASI.Basecode.Services.Services
             return ServiceResult.Ok(item.Status == "pending_category"
                 ? "Item saved and sent to the admin for category review. It will be available to students once the category is approved."
                 : "Equipment asset registered successfully.");
+        }
+
+        // One serial per unit, in order (unit 1 gets the first). Blank = no serial yet. Returns an error or null.
+        private string CheckSerials(IList<string> raw, int quantity, out List<string> serials)
+        {
+            serials = (raw ?? new List<string>()).Select(Optional).ToList();
+            while (serials.Count > 0 && serials[serials.Count - 1] == null)
+                serials.RemoveAt(serials.Count - 1);   // trailing blank lines don't count
+
+            if (serials.Count > quantity)
+                return $"You entered {serials.Count} serial numbers for {quantity} unit(s). Enter one per unit, or fewer and add the rest later.";
+
+            if (serials.Any(s => s != null && s.Length > 100))
+                return "Each serial number can be at most 100 characters.";
+
+            var repeated = serials.Where(s => s != null)
+                                  .GroupBy(s => s, StringComparer.OrdinalIgnoreCase)
+                                  .FirstOrDefault(g => g.Count() > 1);
+            if (repeated != null)
+                return $"The serial number \"{repeated.Key}\" is entered more than once.";
+
+            var entered = serials.Where(s => s != null).ToList();
+            var takenSerial = _equipmentRepository.GetEquipmentItems()
+                .Where(e => entered.Contains(e.SerialNumber))
+                .Select(e => e.SerialNumber)
+                .FirstOrDefault();
+            if (takenSerial != null)
+                return $"The serial number \"{takenSerial}\" is already in use.";
+
+            return null;
+        }
+
+        // ---------- Add more units of an existing model ----------
+        // Copies the name, category, owner and photo from sourceUnitDbId. New codes continue the model's
+        // numbering: after LAPTOP-05 comes LAPTOP-06. A unit with no number (EQ-CAM) counts as unit 1, so
+        // the next is EQ-CAM-02. Codes already used (including archived units) are skipped.
+        public ServiceResult AddUnits(int sourceUnitDbId, string custodianCode, int quantity,
+                                      IList<string> serialNumbers, string conditionRating, string storageLocation,
+                                      string createdBy)
+        {
+            var source = _equipmentRepository.GetEquipmentById(sourceUnitDbId);
+            var ownerDbId = OwnerDbId(custodianCode);
+            if (source == null || source.Status == "archived" || ownerDbId == 0 ||
+                (ownerDbId.HasValue && source.CustodianId != ownerDbId))
+                return ServiceResult.Fail("Equipment item not found.");
+
+            if (!source.CategoryId.HasValue || ItemStatuses.AwaitingCategory.Contains(source.Status))
+                return ServiceResult.Fail("This item is still waiting for its category to be approved. Add more units once the admin approves it.");
+
+            if (source.Category != null && !source.Category.IsActive)
+                return ServiceResult.Fail("This item's category is disabled, so no units can be added to it.");
+
+            if (quantity < 1 || quantity > MaxUnitsPerAdd)
+                return ServiceResult.Fail($"Quantity must be between 1 and {MaxUnitsPerAdd}.");
+
+            var serialError = CheckSerials(serialNumbers, quantity, out var unitSerials);
+            if (serialError != null) return ServiceResult.Fail(serialError);
+
+            // Base code and the highest number the model uses so far
+            var numbered = System.Text.RegularExpressions.Regex.Match(source.ItemCode ?? "", @"^(.+)-(\d+)$");
+            var baseCode = numbered.Success ? numbered.Groups[1].Value : source.ItemCode;
+            var prefix = baseCode + "-";
+            var width = numbered.Success ? Math.Max(2, numbered.Groups[2].Value.Length) : 2;   // EQ-CAM-005 -> EQ-CAM-006
+
+            var highest = _equipmentRepository.GetEquipmentItems()
+                .Where(EquipmentGrouping.SameModelAs(source))
+                .Select(e => e.ItemCode)
+                .ToList()
+                .Select(c => c.StartsWith(prefix) && int.TryParse(c.Substring(prefix.Length), out var n) ? n : 1)
+                .DefaultIfEmpty(1)
+                .Max();
+
+            var codes = new List<string>();
+            for (var n = highest + 1; codes.Count < quantity && n < highest + 1000; n++)
+            {
+                var code = prefix + n.ToString().PadLeft(width, '0');
+                if (code.Length > ItemCodeMaxLength)
+                    return ServiceResult.Fail($"The item code would be longer than {ItemCodeMaxLength} characters.");
+                if (!_equipmentRepository.EquipmentExists(code)) codes.Add(code);
+            }
+            if (codes.Count < quantity)
+                return ServiceResult.Fail("Could not find free item codes for the new units.");
+
+            var now = DateTime.Now;
+            var location = Optional(storageLocation) ?? source.StorageLocation;
+            var condition = Conditions.Contains(conditionRating) ? conditionRating : "good";
+
+            var units = codes.Select((code, index) => new EquipmentItem
+            {
+                ItemCode = code,
+                BrandModel = source.BrandModel,
+                CategoryId = source.CategoryId,
+                CustodianId = source.CustodianId,
+                SerialNumber = index < unitSerials.Count ? unitSerials[index] : null,
+                StorageLocation = location,
+                ConditionRating = condition,
+                Status = "available",
+                ImagePath = source.ImagePath,   // shares the model's photo file
+                CreatedTime = now,
+                UpdatedTime = now,
+                CreatedBy = createdBy ?? "Custodian",
+                UpdatedBy = createdBy ?? "Custodian"
+            }).ToList();
+
+            try
+            {
+                _equipmentRepository.AddEquipmentRange(units);
+            }
+            catch (Exception)
+            {
+                return ServiceResult.Fail("Could not save the units. The item code or serial number may already be in use.");
+            }
+
+            return ServiceResult.Ok(quantity == 1
+                ? $"1 unit added to {source.BrandModel} ({codes[0]})."
+                : $"{quantity} units added to {source.BrandModel} ({codes.First()} to {codes.Last()}).");
         }
 
         public HashSet<int> GetReservedUnitIds()
